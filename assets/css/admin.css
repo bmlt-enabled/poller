@@ -1,0 +1,76 @@
+.poller-admin-code {
+    margin: 0.25rem 0 0.5rem;
+    font-family: "Atkinson Hyperlegible", sans-serif;
+    font-size: 2.4rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1;
+}
+
+.poller-admin-code-small {
+    font-family: "Atkinson Hyperlegible", sans-serif;
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+}
+
+.poller-admin-question {
+    max-width: 28rem;
+}
+
+.poller-inline-form {
+    display: inline;
+}
+
+.poller-inline-form button {
+    height: auto;
+    padding: 0;
+    vertical-align: baseline;
+}
+
+.poller-admin-choice {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.5rem;
+    align-items: center;
+    margin: 0.65rem 0;
+}
+
+.poller-admin-choice .regular-text {
+    flex: 1 1 16rem;
+}
+
+#poller-choices[data-kind="text"] .poller-pick-choice,
+#poller-choices[data-kind="text"] .poller-choice-preview {
+    display: none;
+}
+
+#poller-prompt-preview img,
+.poller-choice-preview img,
+.poller-admin-locked img {
+    display: inline-block;
+    width: 4.5rem;
+    height: 4.5rem;
+    margin-right: 0.35rem;
+    object-fit: cover;
+    vertical-align: middle;
+}
+
+.poller-admin-locked {
+    margin: 0.4rem 0 0.6rem 1.2rem;
+}
+
+#poller-choices fieldset,
+.form-table fieldset {
+    margin: 0 0 0.35rem;
+}
+
+#poller-link {
+    max-width: 36rem;
+    margin: 0.35rem 0.4rem 0.35rem 0;
+}
+
+.poller-admin-table [hidden],
+.wrap [hidden] {
+    display: none !important;
+}

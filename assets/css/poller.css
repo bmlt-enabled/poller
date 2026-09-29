@@ -1,0 +1,456 @@
+:root {
+    --paper: #e4ebe3;
+    --slip: #f7f8f4;
+    --ink: #17241c;
+    --ink-soft: #3e5348;
+    --rule: #c5d4c8;
+    --stamp: #d23b2f;
+    --stamp-deep: #a82e24;
+    --track: #d7e2d8;
+    --board: #1c2b22;
+    --chalk: #f6f3ea;
+    --chalk-dim: #c9d5cc;
+    --board-track: #31443a;
+    --board-rule: #3d5248;
+}
+
+.poller-body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--paper);
+    color: var(--ink);
+    color-scheme: light;
+    font-family: "Atkinson Hyperlegible", sans-serif;
+    font-size: 1.125rem;
+    line-height: 1.45;
+}
+
+.poller-body *,
+.poller-body *::before,
+.poller-body *::after {
+    box-sizing: border-box;
+}
+
+.poller-body [hidden] {
+    display: none !important;
+}
+
+.poller-body :focus-visible {
+    outline: 3px solid var(--ink);
+    outline-offset: 3px;
+}
+
+.poller-sheet {
+    max-width: 36rem;
+    margin: 0 auto;
+    padding: 1.25rem 1.25rem 3rem;
+}
+
+.poller-sheet--join {
+    min-height: 100dvh;
+    max-width: 28rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+
+.poller-mark {
+    margin: 0 0 1.5rem;
+    color: inherit;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.poller-sheet--join .poller-mark {
+    text-align: center;
+}
+
+.poller-top {
+    max-width: 36rem;
+    margin: 0 auto;
+    padding: 1.25rem 1.25rem 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+}
+
+.poller-top .poller-mark {
+    margin: 0;
+}
+
+.poller-sheet h1,
+.poller-join-label,
+.poller-board h1 {
+    margin: 0 0 1rem;
+    font-size: clamp(1.8rem, 4vw, 2.6rem);
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.poller-join-label {
+    display: block;
+    margin-bottom: 0.85rem;
+    text-align: center;
+}
+
+.poller-code-input {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0.65rem 0.5rem;
+    border: 2px solid var(--ink);
+    border-radius: 0;
+    background: var(--slip);
+    color: var(--ink);
+    font: inherit;
+    font-size: clamp(2rem, 8vw, 3.25rem);
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1.1;
+    text-align: center;
+    text-indent: 0.14em;
+    text-transform: uppercase;
+}
+
+.poller-submit {
+    display: block;
+    width: 100%;
+    margin: 1.25rem 0 0;
+    padding: 0.85rem 1rem;
+    border: 0;
+    border-radius: 0;
+    background: var(--stamp);
+    color: #fff;
+    cursor: pointer;
+    font: inherit;
+    font-size: 1.15rem;
+    font-weight: 700;
+}
+
+.poller-submit:hover,
+.poller-submit:focus-visible {
+    background: var(--stamp-deep);
+}
+
+.poller-submit:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}
+
+.poller-hint,
+.poller-closed,
+.poller-error,
+.poller-paused {
+    margin: 0.75rem 0 0;
+}
+
+.poller-error {
+    color: var(--stamp-deep);
+}
+
+.poller-hint,
+.poller-paused {
+    color: var(--ink-soft);
+}
+
+.poller-text-link {
+    color: inherit;
+}
+
+.poller-prompt {
+    margin: 0 0 1rem;
+}
+
+.poller-prompt img {
+    display: block;
+    width: 100%;
+    max-height: 50vh;
+    object-fit: contain;
+    background: #fff;
+}
+
+.poller-choices--text {
+    margin-top: 1rem;
+    border-top: 1px solid var(--rule);
+}
+
+.poller-choice {
+    position: relative;
+}
+
+.poller-choices--text .poller-choice {
+    display: block;
+    padding: 0.9rem 1rem 0.9rem 1.1rem;
+    border-bottom: 1px solid var(--rule);
+    cursor: pointer;
+}
+
+.poller-choices--text .poller-choice:has(input:checked) {
+    background: var(--slip);
+    box-shadow: inset 4px 0 0 var(--stamp);
+}
+
+.poller-choice input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.poller-choice:focus-within {
+    outline: 3px solid var(--ink);
+    outline-offset: 2px;
+}
+
+.poller-choice input:focus {
+    outline: none;
+}
+
+.poller-choices--pictures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.poller-choices--pictures .poller-choice {
+    display: flex;
+    flex-direction: column;
+    background: var(--slip);
+    cursor: pointer;
+}
+
+.poller-choices--pictures .poller-choice img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+}
+
+.poller-choices--pictures .poller-choice-label {
+    padding: 0.55rem 0.65rem 0.7rem;
+}
+
+.poller-choices--pictures .poller-choice:has(input:checked) {
+    outline: 3px solid var(--stamp);
+    outline-offset: 2px;
+}
+
+.poller-results {
+    margin-top: 2rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+}
+
+.poller-results h2 {
+    margin: 0 0 0.85rem;
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+
+.poller-result {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.3rem 0.75rem;
+    align-items: center;
+    margin-bottom: 0.85rem;
+}
+
+.poller-result--picture {
+    grid-template-columns: 3.25rem 1fr auto;
+}
+
+.poller-result-thumb {
+    grid-row: 1 / span 2;
+    grid-column: 1;
+    width: 3.25rem;
+    height: 3.25rem;
+    object-fit: cover;
+}
+
+.poller-result--picture .poller-result-label {
+    grid-column: 2;
+}
+
+.poller-result--picture .poller-count {
+    grid-column: 3;
+}
+
+.poller-result--picture .poller-track {
+    grid-column: 2 / -1;
+}
+
+.poller-result-name {
+    overflow-wrap: anywhere;
+}
+
+.poller-yours {
+    margin-left: 0.4rem;
+    color: var(--stamp);
+}
+
+.poller-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.poller-track {
+    grid-column: 1 / -1;
+    height: 0.7rem;
+    background: var(--track);
+}
+
+.poller-bar {
+    display: block;
+    height: 100%;
+    background: var(--stamp);
+    transition: width 0.4s ease;
+}
+
+.poller-total {
+    margin: 0.4rem 0 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.poller-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.poller-body--board {
+    background: var(--board);
+    color: var(--chalk);
+    color-scheme: dark;
+}
+
+.poller-body--board :focus-visible {
+    outline-color: var(--chalk);
+}
+
+.poller-board {
+    max-width: 72rem;
+    min-height: 100dvh;
+    margin: 0 auto;
+    padding: 1.5rem clamp(1rem, 3vw, 2.5rem) 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.poller-board-head {
+    display: grid;
+    grid-template-columns: 1fr minmax(8rem, 16rem);
+    gap: 1.5rem 2rem;
+    align-items: end;
+}
+
+.poller-board h1 {
+    max-width: 18em;
+    font-size: clamp(1.7rem, 3vw, 2.5rem);
+}
+
+.poller-code {
+    margin: 0.2rem 0 0;
+    font-size: clamp(3.5rem, 12vw, 8rem);
+    font-weight: 700;
+    line-height: 0.9;
+    letter-spacing: 0.14em;
+    text-indent: 0.14em;
+}
+
+.poller-join-hint,
+.poller-body--board .poller-hint,
+.poller-body--board .poller-paused {
+    margin: 0.4rem 0 0;
+    color: var(--chalk-dim);
+}
+
+.poller-qr {
+    width: min(16rem, 42vw);
+    justify-self: end;
+    background: #fff;
+}
+
+.poller-qr svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.poller-body--board .poller-prompt {
+    display: inline-block;
+    max-width: min(36rem, 100%);
+    background: var(--chalk);
+}
+
+.poller-body--board .poller-prompt img {
+    width: auto;
+    max-width: 100%;
+    max-height: 26vh;
+}
+
+.poller-body--board .poller-results {
+    border-top-color: var(--board-rule);
+}
+
+.poller-body--board .poller-results h2 {
+    font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.poller-body--board .poller-result-name,
+.poller-body--board .poller-count,
+.poller-body--board .poller-total {
+    font-size: clamp(1.25rem, 2.4vw, 1.85rem);
+}
+
+.poller-body--board .poller-track {
+    height: 0.9rem;
+    background: var(--board-track);
+}
+
+.poller-body--board .poller-closed {
+    margin: 0;
+    color: var(--chalk);
+    font-size: 1.35rem;
+    font-weight: 700;
+}
+
+@media (max-width: 700px) {
+    .poller-board-head {
+        grid-template-columns: 1fr;
+    }
+
+    .poller-qr {
+        width: 10rem;
+        justify-self: start;
+    }
+}
+
+@media (max-width: 380px) {
+    .poller-choices--pictures {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .poller-bar {
+        transition: none;
+    }
+}
