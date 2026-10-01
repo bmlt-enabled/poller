@@ -35,7 +35,6 @@ class Plugin
 
     public function init(): void
     {
-        load_plugin_textdomain('poller', false, dirname(plugin_basename(POLLER_FILE)) . '/languages');
         $this->register_rewrites();
 
         if (get_option(Repository::VERSION_OPTION) !== Repository::DB_VERSION) {

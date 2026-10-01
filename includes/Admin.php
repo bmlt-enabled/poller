@@ -86,7 +86,8 @@ class Admin
 
     public function handle_save(): void
     {
-        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        $method = isset($_SERVER['REQUEST_METHOD']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_METHOD'])) : '';
+        if ($method !== 'POST') {
             return;
         }
 
@@ -263,7 +264,7 @@ class Admin
             $input = $this->old;
             $poll = $input['id'] ? $this->repo->get_poll((int) $input['id']) : null;
         } else {
-            $id = absint($_GET['poll'] ?? 0);
+            $id = isset($_GET['poll']) ? absint(wp_unslash($_GET['poll'])) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $poll = $id ? $this->repo->get_poll($id) : null;
             if ($id && !$poll) {
                 wp_die(esc_html__('That poll does not exist.', 'poller'), '', ['response' => 404]);
@@ -420,10 +421,11 @@ class Admin
 
     private function notices(): void
     {
-        if (!isset($_GET['poller_notice'])) {
+        // Read-only status from an admin redirect. The value is matched against a fixed list.
+        if (!isset($_GET['poller_notice'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             return;
         }
-        $key = sanitize_key(wp_unslash((string) $_GET['poller_notice']));
+        $key = sanitize_key(wp_unslash($_GET['poller_notice'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $map = [
             'saved' => __('Poll saved.', 'poller'),
             'deleted' => __('Poll deleted.', 'poller'),
@@ -443,8 +445,14 @@ class Admin
      */
     private function posted_poll(): array
     {
-        $labels = (isset($_POST['choice_label']) && is_array($_POST['choice_label'])) ? wp_unslash($_POST['choice_label']) : [];
-        $images = (isset($_POST['choice_image']) && is_array($_POST['choice_image'])) ? wp_unslash($_POST['choice_image']) : [];
+        check_admin_referer('poller_save_poll');
+
+        $labels = (isset($_POST['choice_label']) && is_array($_POST['choice_label']))
+            ? map_deep(wp_unslash($_POST['choice_label']), 'sanitize_text_field')
+            : [];
+        $images = (isset($_POST['choice_image']) && is_array($_POST['choice_image']))
+            ? map_deep(wp_unslash($_POST['choice_image']), 'absint')
+            : [];
         $count = max(count($labels), count($images));
         $choices = [];
         for ($i = 0; $i < $count; $i++) {
@@ -464,15 +472,15 @@ class Admin
             ];
         }
 
-        $kind = (isset($_POST['kind']) && $_POST['kind'] === 'image') ? 'image' : 'text';
-        $selection = (isset($_POST['selection']) && $_POST['selection'] === 'multi') ? 'multi' : 'single';
-        $status = (isset($_POST['status']) && $_POST['status'] === 'closed') ? 'closed' : 'open';
+        $kind = (isset($_POST['kind']) && sanitize_key(wp_unslash($_POST['kind'])) === 'image') ? 'image' : 'text';
+        $selection = (isset($_POST['selection']) && sanitize_key(wp_unslash($_POST['selection'])) === 'multi') ? 'multi' : 'single';
+        $status = (isset($_POST['status']) && sanitize_key(wp_unslash($_POST['status'])) === 'closed') ? 'closed' : 'open';
 
         return [
-            'id' => absint($_POST['poll_id'] ?? 0),
-            'title' => sanitize_text_field(wp_unslash((string) ($_POST['title'] ?? ''))),
-            'question' => sanitize_textarea_field(wp_unslash((string) ($_POST['question'] ?? ''))),
-            'image_id' => absint($_POST['image_id'] ?? 0),
+            'id' => isset($_POST['poll_id']) ? absint(wp_unslash($_POST['poll_id'])) : 0,
+            'title' => isset($_POST['title']) ? sanitize_text_field(wp_unslash($_POST['title'])) : '',
+            'question' => isset($_POST['question']) ? sanitize_textarea_field(wp_unslash($_POST['question'])) : '',
+            'image_id' => isset($_POST['image_id']) ? absint(wp_unslash($_POST['image_id'])) : 0,
             'kind' => $kind,
             'selection' => $selection,
             'status' => $status,

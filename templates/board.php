@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-$open = $state['status'] === 'open';
+$poller_open = $state['status'] === 'open';
 ?>
 <main class="poller-board">
     <header class="poller-board-head">
@@ -31,7 +31,7 @@ $open = $state['status'] === 'open';
         </div>
         <div class="poller-qr" id="poller-qr"></div>
     </header>
-    <p class="poller-closed" data-poller-closed<?php echo $open ? ' hidden' : ''; ?>><?php echo esc_html(__('This poll is closed.', 'poller')); ?></p>
+    <p class="poller-closed" data-poller-closed<?php echo $poller_open ? ' hidden' : ''; ?>><?php echo esc_html(__('This poll is closed.', 'poller')); ?></p>
     <noscript><p class="poller-hint"><?php echo esc_html(__('Refresh the page to update the tally.', 'poller')); ?></p></noscript>
     <?php require __DIR__ . '/results.php'; ?>
 </main>

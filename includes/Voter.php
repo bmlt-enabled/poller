@@ -21,15 +21,22 @@ class Voter
 
     public static function has_token(): bool
     {
-        if (!isset($_COOKIE[self::COOKIE])) {
-            return false;
-        }
-        return (bool) preg_match('/^[a-f0-9]{64}$/', (string) $_COOKIE[self::COOKIE]);
+        return (bool) preg_match('/^[a-f0-9]{64}$/', self::cookie());
     }
 
     public static function token(): string
     {
-        return self::has_token() ? (string) $_COOKIE[self::COOKIE] : '';
+        $cookie = self::cookie();
+        return preg_match('/^[a-f0-9]{64}$/', $cookie) ? $cookie : '';
+    }
+
+    private static function cookie(): string
+    {
+        if (!isset($_COOKIE[self::COOKIE])) {
+            return '';
+        }
+
+        return sanitize_text_field(wp_unslash($_COOKIE[self::COOKIE]));
     }
 
     public static function ensure(): string

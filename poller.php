@@ -5,7 +5,7 @@
  * Version: 0.1.0
  * Requires at least: 6.4
  * Requires PHP: 8.0
- * Tested up to: 6.8
+ * Tested up to: 7.1
  * Author: bmlt-enabled
  * License: GPLv2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html

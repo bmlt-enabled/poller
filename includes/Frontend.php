@@ -77,18 +77,19 @@ class Frontend
 
     public function post_vote(): void
     {
-        $code = isset($_POST['code']) ? Codes::normalize(wp_unslash((string) $_POST['code'])) : '';
+        $code = isset($_POST['code']) ? Codes::normalize(sanitize_text_field(wp_unslash($_POST['code']))) : '';
         $target = Codes::is_valid($code) ? Plugin::poll_url($code) : Plugin::join_url();
-        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash((string) $_POST['nonce'])) : '';
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
 
         if (!wp_verify_nonce($nonce, 'poller_vote_' . $code)) {
             $this->redirect_vote_error($target, 'poller_nonce');
         }
 
         $choices = [];
-        if (isset($_POST['choices'])) {
-            $raw = wp_unslash($_POST['choices']);
-            $choices = is_array($raw) ? $raw : [$raw];
+        if (isset($_POST['choices']) && is_array($_POST['choices'])) {
+            $choices = map_deep(wp_unslash($_POST['choices']), 'absint');
+        } elseif (isset($_POST['choices'])) {
+            $choices = [absint(wp_unslash($_POST['choices']))];
         }
 
         $result = $this->votes->vote($code, $choices);
@@ -105,8 +106,9 @@ class Frontend
         $error = '';
         $code_value = '';
 
-        if (isset($_GET['code'])) {
-            $code_value = sanitize_text_field(wp_unslash((string) $_GET['code']));
+        // Public join lookup. The code only selects a poll to redirect to.
+        if (isset($_GET['code'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+            $code_value = sanitize_text_field(wp_unslash($_GET['code'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             $raw = Codes::normalize($code_value);
             if (Codes::has_ambiguous($raw)) {
                 $error = __('That code has a character that is not used. Codes leave out 0, 1, I, L, and O.', 'poller');
@@ -175,6 +177,7 @@ class Frontend
         $state['restVotes'] = rest_url('poller/v1/polls/' . $code . '/votes');
         $state['i18n'] = [
             'oneVote' => __('1 vote', 'poller'),
+            /* translators: %s is the number of ballots. */
             'manyVotes' => __('%s votes', 'poller'),
             'noVotes' => __('No votes yet', 'poller'),
             'yourVote' => __('Your vote', 'poller'),
@@ -192,10 +195,11 @@ class Frontend
 
     private function vote_error(): string
     {
-        if (!isset($_GET['vote'])) {
+        // Status key added by redirect_vote_error() and matched against a fixed list.
+        if (!isset($_GET['vote'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             return '';
         }
-        $code = sanitize_key(wp_unslash((string) $_GET['vote']));
+        $code = sanitize_key(wp_unslash($_GET['vote'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
         $map = [
             'poller_nonce' => __('That vote did not go through. Vote again.', 'poller'),
             'poller_closed' => __('This poll is closed.', 'poller'),
@@ -267,8 +271,19 @@ class Frontend
         status_header($status);
         nocache_headers();
         header('X-Robots-Tag: noindex, nofollow', true);
-        $font = POLLER_URL . 'assets/css/fonts.css?ver=' . POLLER_VERSION;
-        $css = POLLER_URL . 'assets/css/poller.css?ver=' . POLLER_VERSION;
+
+        wp_enqueue_style('poller-fonts', POLLER_URL . 'assets/css/fonts.css', [], POLLER_VERSION);
+        wp_enqueue_style('poller', POLLER_URL . 'assets/css/poller.css', ['poller-fonts'], POLLER_VERSION);
+
+        $scripts = [];
+        if ($qr) {
+            wp_enqueue_script('poller-qrcode', POLLER_URL . 'assets/js/qrcode.js', [], POLLER_VERSION, false);
+            $scripts[] = 'poller-qrcode';
+        }
+        if ($qr || str_contains($body, 'id="poller-state"')) {
+            wp_enqueue_script('poller', POLLER_URL . 'assets/js/poller.js', $qr ? ['poller-qrcode'] : [], POLLER_VERSION, false);
+            $scripts[] = 'poller';
+        }
         ?>
 <!DOCTYPE html>
 <html <?php language_attributes(); ?>>
@@ -278,18 +293,14 @@ class Frontend
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title><?php echo esc_html($title); ?></title>
-<link rel="stylesheet" href="<?php echo esc_url($font); ?>">
-<link rel="stylesheet" href="<?php echo esc_url($css); ?>">
+        <?php wp_print_styles(['poller-fonts', 'poller']); ?>
 </head>
 <body class="<?php echo esc_attr($body_class); ?>">
         <?php
         // Template markup is escaped at each value.
         echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-        if ($qr) {
-            echo '<script src="' . esc_url(POLLER_URL . 'assets/js/qrcode.js?ver=' . POLLER_VERSION) . '"></script>';
-        }
-        if ($qr || str_contains($body_class, 'poller-body--board') || str_contains($body, 'id="poller-state"')) {
-            echo '<script src="' . esc_url(POLLER_URL . 'assets/js/poller.js?ver=' . POLLER_VERSION) . '"></script>';
+        if ($scripts) {
+            wp_print_scripts($scripts);
         }
         ?>
 </body>

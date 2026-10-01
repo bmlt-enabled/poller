@@ -14,6 +14,9 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// These queries use this plugin's own tables. Ballot totals change on every vote, so they are not cached.
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+
 class Repository
 {
     public const DB_VERSION = '1';
@@ -84,8 +87,8 @@ class Repository
         global $wpdb;
 
         foreach (['votes', 'ballots', 'choices', 'polls'] as $name) {
-            $table = $this->table($name);
-            $wpdb->query("DROP TABLE IF EXISTS {$table}");
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall removes this plugin's tables.
+            $wpdb->query($wpdb->prepare('DROP TABLE IF EXISTS %i', $this->table($name)));
         }
         delete_option(self::VERSION_OPTION);
     }
@@ -148,7 +151,8 @@ class Repository
         global $wpdb;
 
         $wpdb->query($wpdb->prepare(
-            "UPDATE {$this->table('polls')} SET status = %s, revision = revision + 1, updated_at = %s WHERE id = %d",
+            'UPDATE %i SET status = %s, revision = revision + 1, updated_at = %s WHERE id = %d',
+            $this->table('polls'),
             $status,
             $this->now(),
             $id
@@ -159,13 +163,13 @@ class Repository
     {
         global $wpdb;
 
-        $votes = $this->table('votes');
-        $ballots = $this->table('ballots');
         $wpdb->query($wpdb->prepare(
-            "DELETE v FROM {$votes} v INNER JOIN {$ballots} b ON b.id = v.ballot_id WHERE b.poll_id = %d",
+            'DELETE v FROM %i v INNER JOIN %i b ON b.id = v.ballot_id WHERE b.poll_id = %d',
+            $this->table('votes'),
+            $this->table('ballots'),
             $id
         ));
-        $wpdb->delete($ballots, ['poll_id' => $id], ['%d']);
+        $wpdb->delete($this->table('ballots'), ['poll_id' => $id], ['%d']);
         $wpdb->delete($this->table('choices'), ['poll_id' => $id], ['%d']);
         $wpdb->delete($this->table('polls'), ['id' => $id], ['%d']);
     }
@@ -175,7 +179,8 @@ class Repository
         global $wpdb;
 
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table('polls')} WHERE id = %d",
+            'SELECT * FROM %i WHERE id = %d',
+            $this->table('polls'),
             $id
         ), ARRAY_A);
 
@@ -187,7 +192,8 @@ class Repository
         global $wpdb;
 
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table('polls')} WHERE code = %s",
+            'SELECT * FROM %i WHERE code = %s',
+            $this->table('polls'),
             $code
         ), ARRAY_A);
 
@@ -201,14 +207,13 @@ class Repository
     {
         global $wpdb;
 
-        $polls = $this->table('polls');
-        $ballots = $this->table('ballots');
-        $rows = $wpdb->get_results(
-            "SELECT p.*, (SELECT COUNT(*) FROM {$ballots} b WHERE b.poll_id = p.id) AS ballots
-            FROM {$polls} p
-            ORDER BY p.created_at DESC",
-            ARRAY_A
-        );
+        $rows = $wpdb->get_results($wpdb->prepare(
+            'SELECT p.*, (SELECT COUNT(*) FROM %i b WHERE b.poll_id = p.id) AS ballots
+            FROM %i p
+            ORDER BY p.created_at DESC',
+            $this->table('ballots'),
+            $this->table('polls')
+        ), ARRAY_A);
 
         if (!is_array($rows)) {
             return [];
@@ -267,7 +272,8 @@ class Repository
         global $wpdb;
 
         $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM {$this->table('choices')} WHERE poll_id = %d ORDER BY position ASC, id ASC",
+            'SELECT * FROM %i WHERE poll_id = %d ORDER BY position ASC, id ASC',
+            $this->table('choices'),
             $poll_id
         ), ARRAY_A);
 
@@ -291,7 +297,8 @@ class Repository
         global $wpdb;
 
         return (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$this->table('ballots')} WHERE poll_id = %d",
+            'SELECT COUNT(*) FROM %i WHERE poll_id = %d',
+            $this->table('ballots'),
             $poll_id
         ));
     }
@@ -303,14 +310,14 @@ class Repository
     {
         global $wpdb;
 
-        $votes = $this->table('votes');
-        $ballots = $this->table('ballots');
         $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT v.choice_id, COUNT(*) AS votes
-            FROM {$votes} v
-            INNER JOIN {$ballots} b ON b.id = v.ballot_id
+            'SELECT v.choice_id, COUNT(*) AS votes
+            FROM %i v
+            INNER JOIN %i b ON b.id = v.ballot_id
             WHERE b.poll_id = %d
-            GROUP BY v.choice_id",
+            GROUP BY v.choice_id',
+            $this->table('votes'),
+            $this->table('ballots'),
             $poll_id
         ), ARRAY_A);
 
@@ -329,7 +336,8 @@ class Repository
         global $wpdb;
 
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table('ballots')} WHERE poll_id = %d AND voter_token = %s",
+            'SELECT * FROM %i WHERE poll_id = %d AND voter_token = %s',
+            $this->table('ballots'),
             $poll_id,
             $voter_token
         ), ARRAY_A);
@@ -353,7 +361,8 @@ class Repository
         global $wpdb;
 
         $ids = $wpdb->get_col($wpdb->prepare(
-            "SELECT choice_id FROM {$this->table('votes')} WHERE ballot_id = %d",
+            'SELECT choice_id FROM %i WHERE ballot_id = %d',
+            $this->table('votes'),
             $ballot_id
         ));
 
@@ -383,7 +392,8 @@ class Repository
         $wpdb->query('START TRANSACTION');
 
         $poll = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, status FROM {$polls} WHERE id = %d FOR UPDATE",
+            'SELECT id, status FROM %i WHERE id = %d FOR UPDATE',
+            $polls,
             $poll_id
         ));
         if (!$poll || $poll->status !== 'open') {
@@ -398,10 +408,13 @@ class Repository
         }
 
         $placeholders = implode(',', array_fill(0, count($choice_ids), '%d'));
+        // The IN list is only repeated %d placeholders, one per choice id.
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $found = $wpdb->get_col($wpdb->prepare(
-            "SELECT id FROM {$choices} WHERE poll_id = %d AND id IN ({$placeholders})",
-            ...array_merge([$poll_id], $choice_ids)
+            "SELECT id FROM %i WHERE poll_id = %d AND id IN ({$placeholders})",
+            ...array_merge([$choices, $poll_id], $choice_ids)
         ));
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $found = is_array($found) ? array_map('intval', $found) : [];
         sort($found);
         $expected = array_map('intval', $choice_ids);
@@ -412,7 +425,8 @@ class Repository
         }
 
         $ballot_id = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT id FROM {$ballots} WHERE poll_id = %d AND voter_token = %s LIMIT 1 FOR UPDATE",
+            'SELECT id FROM %i WHERE poll_id = %d AND voter_token = %s LIMIT 1 FOR UPDATE',
+            $ballots,
             $poll_id,
             $voter_token
         ));
@@ -430,7 +444,8 @@ class Repository
             );
             if (!$inserted) {
                 $ballot_id = (int) $wpdb->get_var($wpdb->prepare(
-                    "SELECT id FROM {$ballots} WHERE poll_id = %d AND voter_token = %s LIMIT 1",
+                    'SELECT id FROM %i WHERE poll_id = %d AND voter_token = %s LIMIT 1',
+                    $ballots,
                     $poll_id,
                     $voter_token
                 ));
@@ -468,7 +483,8 @@ class Repository
         }
 
         $wpdb->query($wpdb->prepare(
-            "UPDATE {$polls} SET revision = revision + 1, updated_at = %s WHERE id = %d",
+            'UPDATE %i SET revision = revision + 1, updated_at = %s WHERE id = %d',
+            $polls,
             $now,
             $poll_id
         ));
@@ -480,7 +496,8 @@ class Repository
         global $wpdb;
 
         $wpdb->query($wpdb->prepare(
-            "UPDATE {$this->table('polls')} SET revision = revision + 1, updated_at = %s WHERE id = %d",
+            'UPDATE %i SET revision = revision + 1, updated_at = %s WHERE id = %d',
+            $this->table('polls'),
             $this->now(),
             $id
         ));
