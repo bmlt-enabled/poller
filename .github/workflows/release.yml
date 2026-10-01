@@ -1,0 +1,55 @@
+name: 'release'
+
+on:
+  push:
+    tags: [ '*' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out code 🛒
+        uses: actions/checkout@v6
+
+      - name: Setup PHP 🐫
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+
+      - name: Run tests 🧪
+        run: make test
+
+  package:
+    runs-on: ubuntu-24.04
+    needs: [ test ]
+    permissions:
+      contents: write
+    steps:
+      - name: Check out code 🛒
+        uses: actions/checkout@v6
+
+      - name: Build plugin zip 📦
+        run: |
+          export ZIP_FILENAME=poller-${GITHUB_REF_NAME}.zip
+          make build
+          echo "ARTIFACT_PATH=build/${ZIP_FILENAME}" >> "$GITHUB_ENV"
+
+      - name: Generate Release Notes 📝
+        if: github.ref_type == 'tag'
+        run: |
+          curl -fsSL -o gh-release-notes.sh https://raw.githubusercontent.com/bmlt-enabled/release-notes-tool/main/gh-release-notes.sh
+          chmod +x gh-release-notes.sh
+          ./gh-release-notes.sh readme.txt "wp"
+          if [[ "$GITHUB_REF_NAME" == *beta* ]]; then
+            echo "RELEASE_TYPE=true" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_TYPE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create Release 🎉
+        uses: ncipollo/release-action@v1.20.0
+        if: github.ref_type == 'tag'
+        with:
+          artifacts: ${{ env.ARTIFACT_PATH }}
+          bodyFile: changelog.txt
+          prerelease: ${{ env.RELEASE_TYPE }}
