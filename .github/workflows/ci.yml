@@ -37,3 +37,36 @@ jobs:
           name: poller
           path: build/poller.zip
           if-no-files-found: error
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    needs: [ test ]
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      S3_BUCKET: archives.bmlt.app
+      S3_KEY: poller
+      BUILD_DIR: build
+      PLUGIN: poller
+    steps:
+      - name: Check out code 🛒
+        uses: actions/checkout@v6
+
+      - name: Build plugin zip 📦
+        run: |
+          export ZIP_FILENAME=${PLUGIN}-build-${GITHUB_RUN_NUMBER}-${GITHUB_SHA}.zip
+          echo "ZIP_FILENAME=${ZIP_FILENAME}" >> "$GITHUB_ENV"
+          make build
+
+      - name: Configure AWS credentials 🪪
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions/gh-ci-s3-artifact
+          role-session-name: gh-actions-${{ env.PLUGIN }}
+          aws-region: us-east-1
+
+      - name: Copy artifact to S3 🪣
+        run: |
+          aws s3 cp "${BUILD_DIR}/${ZIP_FILENAME}" "s3://${S3_BUCKET}/${S3_KEY}/${ZIP_FILENAME}"
