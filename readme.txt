@@ -12,7 +12,7 @@ Anonymous polls people join with a code or a QR code, with a live tally everyone
 
 == Description ==
 
-Create a poll with text choices or picture choices. Each poll is one choice or more than one, and it can include a picture with the question.
+Create a poll with text choices or picture choices. Each poll is one choice, more than one, or dot voting, and it can include a picture with the question. With dot voting, each person spreads a set number of dots across up to 100 items, and the tally ranks the items by dots.
 
 Open the room display to show a large code and a QR code. People scan it, or open the join page and type the code. Everyone sees the tally update while the poll is open.
 

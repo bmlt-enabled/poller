@@ -117,10 +117,8 @@ class Admin
             'title' => $this->title_or_question($input),
             'question' => $input['question'],
             'image_id' => $input['image_id'],
-            'kind' => $locked ? (string) $existing['kind'] : $input['kind'],
-            'selection' => $locked ? (string) $existing['selection'] : $input['selection'],
             'status' => $input['status'],
-        ];
+        ] + ($locked ? $this->rule_fields($existing) : $this->rule_fields($this->stored_rules($input)));
 
         if (!$existing) {
             try {
@@ -144,8 +142,7 @@ class Admin
         $id = (int) $existing['id'];
         $notice = 'saved';
         if (!$locked && !$this->repo->replace_choices($id, $this->choice_rows($input))) {
-            $fields['kind'] = (string) $existing['kind'];
-            $fields['selection'] = (string) $existing['selection'];
+            $fields = $this->rule_fields($existing) + $fields;
             $notice = 'kept';
         }
         $this->repo->update_poll($id, $fields);
@@ -241,7 +238,7 @@ class Admin
                                     <?php
                                     echo esc_html($poll['kind'] === 'image' ? __('Pictures', 'poller') : __('Text', 'poller'));
                                     echo esc_html(', ');
-                                    echo esc_html($poll['selection'] === 'multi' ? __('more than one', 'poller') : __('one', 'poller'));
+                                    echo esc_html($this->selection_label($poll));
                                     ?>
                                 </td>
                                 <td><?php echo $poll['status'] === 'open' ? esc_html__('Open', 'poller') : esc_html__('Closed', 'poller'); ?></td>
@@ -345,7 +342,7 @@ class Admin
                         <td>
                             <?php if ($locked) : ?>
                                 <p><?php echo esc_html($input['kind'] === 'image' ? __('Picture choices', 'poller') : __('Text choices', 'poller')); ?>,
-                                    <?php echo esc_html($input['selection'] === 'multi' ? __('more than one', 'poller') : __('one', 'poller')); ?></p>
+                                    <?php echo esc_html($this->selection_label($poll)); ?></p>
                                 <ul class="poller-admin-locked">
                                     <?php foreach ($choices as $choice) : ?>
                                         <li>
@@ -357,7 +354,7 @@ class Admin
                                         </li>
                                     <?php endforeach; ?>
                                 </ul>
-                                <p class="description"><?php esc_html_e('People have already voted, so the choices stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller'); ?></p>
+                                <p class="description"><?php esc_html_e('People have already voted, so the choices and voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller'); ?></p>
                             <?php else : ?>
                                 <fieldset>
                                     <legend class="screen-reader-text"><?php esc_html_e('Choice type', 'poller'); ?></legend>
@@ -370,8 +367,28 @@ class Admin
                                     <label><input type="radio" name="selection" value="single" <?php checked($input['selection'], 'single'); ?>> <?php esc_html_e('One choice', 'poller'); ?></label>
                                     &nbsp;
                                     <label><input type="radio" name="selection" value="multi" <?php checked($input['selection'], 'multi'); ?>> <?php esc_html_e('More than one', 'poller'); ?></label>
+                                    &nbsp;
+                                    <label><input type="radio" name="selection" value="dots" <?php checked($input['selection'], 'dots'); ?>> <?php esc_html_e('Dot voting', 'poller'); ?></label>
                                 </fieldset>
-                                <div id="poller-choices" data-kind="<?php echo esc_attr($input['kind']); ?>" data-max="12" data-placeholder-text="<?php echo esc_attr__('Choice', 'poller'); ?>" data-placeholder-image="<?php echo esc_attr__('Caption, optional', 'poller'); ?>">
+                                <fieldset class="poller-admin-dots" id="poller-dots-settings">
+                                    <legend><?php esc_html_e('Dot voting', 'poller'); ?></legend>
+                                    <p class="description"><?php esc_html_e('Each person spreads a set number of dots across the items.', 'poller'); ?></p>
+                                    <p>
+                                        <label for="poller-budget"><?php esc_html_e('Dots for each person', 'poller'); ?></label>
+                                        <input type="number" id="poller-budget" name="budget" class="small-text" min="1" max="<?php echo esc_attr((string) BallotRules::MAX_BUDGET); ?>" value="<?php echo esc_attr((string) (int) $input['budget']); ?>">
+                                    </p>
+                                    <p>
+                                        <label><input type="checkbox" id="poller-stacking" name="stacking" value="1" <?php checked($input['stacking']); ?>> <?php esc_html_e('Allow more than one dot on an item', 'poller'); ?></label>
+                                    </p>
+                                    <p id="poller-per-choice-row">
+                                        <label for="poller-per-choice"><?php esc_html_e('Most dots on one item', 'poller'); ?></label>
+                                        <input type="number" id="poller-per-choice" name="per_choice" class="small-text" min="2" max="<?php echo esc_attr((string) BallotRules::MAX_BUDGET); ?>" value="<?php echo esc_attr((string) (int) $input['per_choice']); ?>">
+                                    </p>
+                                    <p>
+                                        <label><input type="checkbox" name="spend_all" value="1" <?php checked($input['spend_all']); ?>> <?php esc_html_e('People must use every dot', 'poller'); ?></label>
+                                    </p>
+                                </fieldset>
+                                <div id="poller-choices" data-kind="<?php echo esc_attr($input['kind']); ?>" data-max="<?php echo esc_attr((string) BallotRules::max_choices($input['selection'])); ?>" data-max-single="<?php echo esc_attr((string) BallotRules::MAX_CHOICES); ?>" data-max-dots="<?php echo esc_attr((string) BallotRules::MAX_DOT_CHOICES); ?>" data-placeholder-text="<?php echo esc_attr__('Choice', 'poller'); ?>" data-placeholder-image="<?php echo esc_attr__('Caption, optional', 'poller'); ?>">
                                     <?php foreach ($choices as $choice) : ?>
                                         <?php $thumb = $this->image_preview((int) $choice['image_id']); ?>
                                         <div class="poller-admin-choice">
@@ -384,6 +401,11 @@ class Admin
                                     <?php endforeach; ?>
                                 </div>
                                 <p><button type="button" class="button" id="poller-add-choice"><?php esc_html_e('Add choice', 'poller'); ?></button></p>
+                                <p>
+                                    <label for="poller-choice-list"><?php esc_html_e('Paste a list', 'poller'); ?></label><br>
+                                    <textarea id="poller-choice-list" name="choice_list" class="large-text" rows="5"></textarea>
+                                </p>
+                                <p class="description"><?php esc_html_e('One choice per line. They are added after the choices above when you save.', 'poller'); ?></p>
                                 <template id="poller-choice-template">
                                     <div class="poller-admin-choice">
                                         <input type="text" class="regular-text" name="choice_label[]" maxlength="160" value="" placeholder="<?php echo esc_attr__('Choice', 'poller'); ?>">
@@ -472,8 +494,25 @@ class Admin
             ];
         }
 
+        $pasted = isset($_POST['choice_list']) ? sanitize_textarea_field(wp_unslash($_POST['choice_list'])) : '';
+        foreach (preg_split('/\R/', $pasted) ?: [] as $line) {
+            $label = sanitize_text_field($line);
+            if ($label !== '') {
+                $choices[] = [
+                    'label' => $label,
+                    'image_id' => 0,
+                ];
+            }
+        }
+
         $kind = (isset($_POST['kind']) && sanitize_key(wp_unslash($_POST['kind'])) === 'image') ? 'image' : 'text';
-        $selection = (isset($_POST['selection']) && sanitize_key(wp_unslash($_POST['selection'])) === 'multi') ? 'multi' : 'single';
+        $selection = isset($_POST['selection']) ? sanitize_key(wp_unslash($_POST['selection'])) : '';
+        if (!in_array($selection, ['single', 'multi', 'dots'], true)) {
+            $selection = 'single';
+        }
+        $budget = isset($_POST['budget']) ? absint(wp_unslash($_POST['budget'])) : BallotRules::DEFAULT_BUDGET;
+        $stacking = !empty($_POST['stacking']);
+        $per_choice = isset($_POST['per_choice']) ? absint(wp_unslash($_POST['per_choice'])) : $budget;
         $status = (isset($_POST['status']) && sanitize_key(wp_unslash($_POST['status'])) === 'closed') ? 'closed' : 'open';
 
         return [
@@ -483,6 +522,10 @@ class Admin
             'image_id' => isset($_POST['image_id']) ? absint(wp_unslash($_POST['image_id'])) : 0,
             'kind' => $kind,
             'selection' => $selection,
+            'budget' => $budget,
+            'stacking' => $stacking,
+            'per_choice' => $per_choice,
+            'spend_all' => !empty($_POST['spend_all']),
             'status' => $status,
             'choices' => $choices,
         ];
@@ -511,8 +554,19 @@ class Admin
         if (count($input['choices']) < 2) {
             return __('Add at least two choices.', 'poller');
         }
-        if (count($input['choices']) > 12) {
-            return __('A poll can have up to 12 choices.', 'poller');
+        $max = BallotRules::max_choices($input['selection']);
+        if (count($input['choices']) > $max) {
+            return sprintf(
+                /* translators: %d is the most choices a poll can have. */
+                __('A poll like this can have up to %d choices.', 'poller'),
+                $max
+            );
+        }
+        if ($input['selection'] === 'dots') {
+            $error = $this->validate_dots($input);
+            if ($error !== null) {
+                return $error;
+            }
         }
         foreach ($input['choices'] as $choice) {
             if ($this->length($choice['label']) > 160) {
@@ -526,6 +580,104 @@ class Admin
             }
         }
         return null;
+    }
+
+    /**
+     * @param array<string, mixed> $input
+     */
+    private function validate_dots(array $input): ?string
+    {
+        $budget = (int) $input['budget'];
+        if ($budget < 1 || $budget > BallotRules::MAX_BUDGET) {
+            return sprintf(
+                /* translators: %d is the most dots a person can have. */
+                __('Give each person from 1 to %d dots.', 'poller'),
+                BallotRules::MAX_BUDGET
+            );
+        }
+        $rules = $this->stored_rules($input);
+        if ($input['stacking'] && $budget > 1 && ($input['per_choice'] < 2 || $input['per_choice'] > $budget)) {
+            return sprintf(
+                /* translators: %d is how many dots each person has. */
+                __('Set the most dots on one item from 2 to %d.', 'poller'),
+                $budget
+            );
+        }
+        if ($rules['spend_all'] && count($input['choices']) * $rules['per_choice'] < $budget) {
+            return __('There is no way to use every dot with these items. Add items, allow more dots on one item, or turn off "People must use every dot".', 'poller');
+        }
+        return null;
+    }
+
+    /**
+     * Voting rules as they are stored. With stacking off, an item takes 1 dot.
+     * Polls that are not dot voting store zeros.
+     *
+     * @param array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    private function stored_rules(array $input): array
+    {
+        $rules = [
+            'kind' => $input['kind'],
+            'selection' => $input['selection'],
+            'budget' => 0,
+            'per_choice' => 0,
+            'spend_all' => false,
+        ];
+        if ($input['selection'] !== 'dots') {
+            return $rules;
+        }
+        $budget = (int) $input['budget'];
+        $rules['budget'] = $budget;
+        $rules['per_choice'] = $input['stacking'] ? max(1, min((int) $input['per_choice'], $budget)) : 1;
+        $rules['spend_all'] = (bool) $input['spend_all'];
+        return $rules;
+    }
+
+    /**
+     * @param array<string, mixed> $poll
+     * @return array<string, mixed>
+     */
+    private function rule_fields(array $poll): array
+    {
+        return [
+            'kind' => (string) $poll['kind'],
+            'selection' => (string) $poll['selection'],
+            'budget' => (int) $poll['budget'],
+            'per_choice' => (int) $poll['per_choice'],
+            'spend_all' => !empty($poll['spend_all']),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $poll
+     */
+    private function selection_label(array $poll): string
+    {
+        if ($poll['selection'] === 'multi') {
+            return __('more than one', 'poller');
+        }
+        if ($poll['selection'] !== 'dots') {
+            return __('one', 'poller');
+        }
+        $budget = (int) $poll['budget'];
+        $label = sprintf(
+            /* translators: %d is how many dots each person has. */
+            _n('dot voting, %d dot', 'dot voting, %d dots', $budget, 'poller'),
+            $budget
+        );
+        if ((int) $poll['per_choice'] > 1) {
+            $label .= ', ' . sprintf(
+                /* translators: %d is the most dots on one item. */
+                __('up to %d on one item', 'poller'),
+                (int) $poll['per_choice']
+            );
+        }
+        if (!empty($poll['spend_all'])) {
+            $label .= ', ' . __('use every dot', 'poller');
+        }
+        return $label;
     }
 
     /**
@@ -579,6 +731,10 @@ class Admin
             'image_id' => (int) $poll['image_id'],
             'kind' => (string) $poll['kind'],
             'selection' => (string) $poll['selection'],
+            'budget' => (int) $poll['budget'] > 0 ? (int) $poll['budget'] : BallotRules::DEFAULT_BUDGET,
+            'stacking' => (int) $poll['per_choice'] > 1,
+            'per_choice' => (int) $poll['per_choice'] > 1 ? (int) $poll['per_choice'] : max(2, (int) $poll['budget']),
+            'spend_all' => !empty($poll['spend_all']),
             'status' => (string) $poll['status'],
             'choices' => $choices,
         ];
@@ -596,6 +752,10 @@ class Admin
             'image_id' => 0,
             'kind' => 'text',
             'selection' => 'single',
+            'budget' => BallotRules::DEFAULT_BUDGET,
+            'stacking' => false,
+            'per_choice' => BallotRules::DEFAULT_BUDGET,
+            'spend_all' => false,
             'status' => 'open',
             'choices' => [],
         ];
