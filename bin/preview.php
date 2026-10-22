@@ -71,6 +71,7 @@ if (!function_exists('sanitize_text_field')) {
 // phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
 
 require_once dirname(__DIR__) . '/includes/Tally.php';
+require_once dirname(__DIR__) . '/includes/BallotRules.php';
 
 function poller_preview_svg(string $color): string
 {
@@ -110,6 +111,15 @@ function poller_preview_client(array $state, string $view): array
             'showTop' => 'Show the top 10',
         ];
     }
+    if ($state['selection'] === 'words') {
+        $state['i18n'] += [
+            'enterWord' => 'Enter at least one word.',
+            'yourWord' => 'Your word',
+            'noWords' => 'Words will show up here as people answer.',
+            'showAll' => 'Show all %s',
+            'showTop' => 'Show the top 10',
+        ];
+    }
     return $state;
 }
 
@@ -129,6 +139,7 @@ function poller_preview_text_state(): array
         'dots' => 0,
         'image' => null,
         'mine' => [],
+        'words' => [],
         'choices' => [
             ['id' => 1, 'label' => 'The library', 'votes' => 11, 'image' => null],
             ['id' => 2, 'label' => 'The park shelter', 'votes' => 4, 'image' => null],
@@ -180,8 +191,50 @@ function poller_preview_dots_state(bool $stacking): array
     return $state;
 }
 
+/**
+ * Stored word cloud entries, as Repository::word_rows() returns them.
+ *
+ * @return array<int, array{key: string, text: string, count: int}>
+ */
+function poller_preview_word_rows(): array
+{
+    $entries = [
+        'Hopeful' => 9, 'hopeful' => 2, 'Tired' => 7, 'grateful' => 6, 'Calm' => 5, 'Busy' => 4,
+        'connected' => 4, 'Long day' => 3, 'peaceful' => 3, 'Rested' => 2, 'curious' => 2,
+        'Inspired' => 2, 'Full' => 1, 'Stretched thin' => 1, 'quiet' => 1, 'Okay' => 1,
+        'Seen' => 1, 'Encouraged' => 1, 'Restless' => 1, 'Present' => 1, 'Home' => 1,
+    ];
+    $rows = [];
+    foreach ($entries as $text => $count) {
+        $word = BmltEnabled\Poller\BallotRules::word($text);
+        $rows[] = ['key' => $word['key'], 'text' => $word['text'], 'count' => $count];
+    }
+    return $rows;
+}
+
+/**
+ * A word cloud poll, three words per person.
+ *
+ * @param array<int, array{key: string, text: string, count: int}> $extra More entries, from a preview vote.
+ */
+function poller_preview_words_state(array $extra = []): array
+{
+    $state = poller_preview_text_state();
+    $state['question'] = 'One word for how today went?';
+    $state['selection'] = 'words';
+    $state['budget'] = 3;
+    $state['ballots'] = 22;
+    $state['revision'] = 5;
+    $state['choices'] = [];
+    $state['words'] = BmltEnabled\Poller\Tally::words(array_merge(poller_preview_word_rows(), $extra));
+    return $state;
+}
+
 function poller_preview_view_state(string $view): array
 {
+    if ($view === 'words' || $view === 'words-board') {
+        return poller_preview_words_state();
+    }
     if ($view === 'pictures') {
         return poller_preview_picture_state();
     }
@@ -225,9 +278,9 @@ function poller_preview_render(string $view): string
     } elseif ($view === 'error') {
         $error = 'That code has a character that is not used. Codes leave out 0, 1, I, L, and O.';
         $code_value = 'K7MQ20';
-    } elseif (in_array($view, ['poll', 'pictures', 'multi', 'closed', 'board', 'dots', 'dots-toggle', 'dots-board'], true)) {
+    } elseif (in_array($view, ['poll', 'pictures', 'multi', 'closed', 'board', 'dots', 'dots-toggle', 'dots-board', 'words', 'words-board'], true)) {
         $state = poller_preview_view_state($view);
-        $board = $view === 'board' || $view === 'dots-board';
+        $board = str_ends_with($view, 'board');
         $template = $board ? 'board' : 'poll';
         $class = $board ? 'poller-body poller-body--board' : 'poller-body';
         $title = $state['question'];
@@ -250,6 +303,21 @@ function poller_preview_render(string $view): string
     foreach ($state['choices'] as $choice) {
         $parts[] = $choice['label'] . ' ' . $choice['votes'];
     }
+    foreach ($state['words'] as $word) {
+        $parts[] = $word['text'] . ' ' . $word['count'];
+    }
+    $moderate = null;
+    if ($view === 'words') {
+        // What an admin sees on the poll page. The preview has no admin-post, so the button goes nowhere.
+        $moderate = [
+            'url' => '/words',
+            'poll' => 1,
+            'nonce' => 'preview',
+            'hide' => 'Hide',
+            'hideLabel' => 'Hide "%s" from the results',
+        ];
+        $client['moderate'] = $moderate;
+    }
     $summary = implode('. ', $parts) . '.';
 
     $data = [
@@ -265,6 +333,7 @@ function poller_preview_render(string $view): string
         'summary' => $summary,
         'your_vote' => 'Your vote',
         'join_human' => 'example.org/poller',
+        'moderate' => $moderate,
     ];
 
     ob_start();
@@ -292,6 +361,10 @@ function poller_preview_render(string $view): string
     <?php if ($qr) : ?>
         <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript ?>
         <script src="/assets/js/qrcode.js"></script>
+    <?php endif; ?>
+    <?php if (str_contains($body, 'data-poller-cloud')) : ?>
+        <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript ?>
+        <script src="/assets/js/cloud.js"></script>
     <?php endif; ?>
     <?php if ($qr || str_contains($body, 'id="poller-state"')) : ?>
         <?php // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript ?>
@@ -332,6 +405,25 @@ function poller_preview_serve(): ?bool
         $payload = json_decode((string) file_get_contents('php://input'), true);
         $submitted = (is_array($payload) && isset($payload['choices']) && is_array($payload['choices'])) ? $payload['choices'] : [];
         $state = poller_preview_view_state($view);
+        if ($state['selection'] === 'words') {
+            $picked = BmltEnabled\Poller\BallotRules::words($submitted, (int) $state['budget']);
+            if ($picked['error'] !== null) {
+                http_response_code(400);
+                header('Content-Type: application/json');
+                echo wp_json_encode(['code' => 'poller_' . $picked['error'], 'message' => 'Check your words: ' . $picked['error']]);
+                return null;
+            }
+            $extra = array_map(static function ($word) {
+                return $word + ['count' => 1];
+            }, $picked['words']);
+            $state = poller_preview_words_state($extra);
+            $state['mine'] = array_column($picked['words'], 'text');
+            $state['ballots']++;
+            $state['revision']++;
+            header('Content-Type: application/json');
+            echo wp_json_encode(poller_preview_client($state, $view));
+            return null;
+        }
         // Dot polls send choice id => dots. The others send a list of choice ids.
         $weights = $state['selection'] === 'dots'
             ? array_map('intval', $submitted)
@@ -359,6 +451,8 @@ function poller_preview_serve(): ?bool
         '/dots' => 'dots',
         '/dots-toggle' => 'dots-toggle',
         '/dots-board' => 'dots-board',
+        '/words' => 'words',
+        '/words-board' => 'words-board',
         '/missing' => 'missing',
         '/error' => 'error',
     ];
@@ -374,8 +468,20 @@ function poller_preview_serve(): ?bool
 function poller_preview_self_check(): void
 {
     $failed = 0;
-    foreach (['join', 'poll', 'pictures', 'multi', 'closed', 'board', 'dots', 'dots-toggle', 'dots-board', 'missing', 'error'] as $view) {
+    foreach (['join', 'poll', 'pictures', 'multi', 'closed', 'board', 'dots', 'dots-toggle', 'dots-board', 'words', 'words-board', 'missing', 'error'] as $view) {
         $html = poller_preview_render($view);
+        if (str_starts_with($view, 'words') && (!str_contains($html, 'data-poller-cloud') || !str_contains($html, 'data-word="hopeful"'))) {
+            fwrite(STDERR, "FAIL: {$view} is missing the word cloud\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            $failed++;
+        }
+        if ($view === 'words' && substr_count($html, 'name="words[]"') !== 3) {
+            fwrite(STDERR, "FAIL: words is missing the word boxes\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            $failed++;
+        }
+        if ($view === 'words-board' && str_contains($html, 'poller_hide_word')) {
+            fwrite(STDERR, "FAIL: the room display shows hide buttons\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            $failed++;
+        }
         if (str_starts_with($view, 'dots') && !str_contains($html, 'poller-results--ranked')) {
             fwrite(STDERR, "FAIL: {$view} is missing the ranked tally\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             $failed++;
@@ -384,12 +490,12 @@ function poller_preview_self_check(): void
             fwrite(STDERR, "FAIL: {$view} is missing the dot controls\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             $failed++;
         }
-        if (!str_contains($html, 'Poller') && $view !== 'board' && $view !== 'dots-board') {
+        if (!str_contains($html, 'Poller') && !str_ends_with($view, 'board')) {
             fwrite(STDERR, "FAIL: {$view} did not render\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             $failed++;
             continue;
         }
-        if (($view === 'board' || $view === 'dots-board') && !str_contains($html, 'K7MQ2P')) {
+        if (str_ends_with($view, 'board') && !str_contains($html, 'K7MQ2P')) {
             fwrite(STDERR, "FAIL: board is missing the code\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             $failed++;
         }

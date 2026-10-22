@@ -23,6 +23,7 @@ $poller_open = $state['status'] === 'open';
 $poller_voted = !empty($state['mine']);
 $poller_multiple = $state['selection'] === 'multi';
 $poller_dots = $state['selection'] === 'dots';
+$poller_cloud = $state['selection'] === 'words';
 $poller_budget = (int) $state['budget'];
 $poller_per_choice = (int) $state['per_choice'];
 ?>
@@ -68,6 +69,19 @@ $poller_per_choice = (int) $state['per_choice'];
             ?>
         </p>
     <?php endif; ?>
+    <?php if ($poller_cloud && $poller_open) : ?>
+        <p class="poller-hint">
+            <?php
+            echo esc_html(sprintf(
+                /* translators: %d is how many words each voter can enter. */
+                _n('Enter a word or a short phrase.', 'Enter up to %d words or short phrases.', $poller_budget, 'poller'),
+                $poller_budget
+            ));
+            echo ' ';
+            echo esc_html(__('Everyone sees them together, never who wrote what.', 'poller'));
+            ?>
+        </p>
+    <?php endif; ?>
     <p class="poller-error" role="alert" data-poller-error<?php echo $error === '' ? ' hidden' : ''; ?>><?php echo esc_html($error); ?></p>
     <p class="poller-closed" data-poller-closed<?php echo $poller_open ? ' hidden' : ''; ?>><?php echo esc_html(__('This poll is closed.', 'poller')); ?></p>
     <form id="poller-vote" method="post" action="<?php echo esc_url($post_url); ?>"<?php echo $poller_open ? '' : ' hidden'; ?>>
@@ -76,6 +90,8 @@ $poller_per_choice = (int) $state['per_choice'];
         <input type="hidden" name="nonce" value="<?php echo esc_attr($nonce); ?>">
         <?php if ($poller_dots) : ?>
             <?php require __DIR__ . '/dots.php'; ?>
+        <?php elseif ($poller_cloud) : ?>
+            <?php require __DIR__ . '/words.php'; ?>
         <?php else : ?>
         <div class="poller-choices <?php echo $state['kind'] === 'image' ? 'poller-choices--pictures' : 'poller-choices--text'; ?>" role="group" aria-labelledby="poller-question">
             <?php foreach ($state['choices'] as $poller_choice) : ?>

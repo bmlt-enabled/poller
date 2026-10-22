@@ -95,14 +95,28 @@
     });
 
     var dotsSettings = document.getElementById("poller-dots-settings");
+    var wordsSettings = document.getElementById("poller-words-settings");
+    var choiceSetup = document.getElementById("poller-choice-setup");
+    var kindPicker = document.getElementById("poller-kind");
     var stacking = document.getElementById("poller-stacking");
     var perChoiceRow = document.getElementById("poller-per-choice-row");
     var paintSelection = function () {
         var picked = document.querySelector('input[name="selection"]:checked');
         var isDots = !!picked && picked.value === "dots";
+        var isWords = !!picked && picked.value === "words";
         wrap.dataset.max = isDots ? wrap.dataset.maxDots : wrap.dataset.maxSingle;
         if (dotsSettings) {
             dotsSettings.hidden = !isDots;
+        }
+        // A word cloud has no choices: people type their own.
+        if (wordsSettings) {
+            wordsSettings.hidden = !isWords;
+        }
+        if (choiceSetup) {
+            choiceSetup.hidden = isWords;
+        }
+        if (kindPicker) {
+            kindPicker.hidden = isWords;
         }
         if (perChoiceRow && stacking) {
             perChoiceRow.hidden = !stacking.checked;

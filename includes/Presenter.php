@@ -30,16 +30,25 @@ class Presenter
         $choices = $this->repo->get_choices($poll_id);
         $counts = $this->repo->choice_counts($poll_id);
         $mine = [];
+        $selection = (string) $poll['selection'];
+        $dots = $selection === 'dots';
+        $cloud = $selection === 'words';
 
         if ($voter_hash) {
             $ballot = $this->repo->get_ballot($poll_id, $voter_hash);
             if ($ballot) {
-                $mine = $this->repo->ballot_weights((int) $ballot['id']);
+                $mine = $cloud
+                    ? $this->repo->ballot_words((int) $ballot['id'])
+                    : $this->repo->ballot_weights((int) $ballot['id']);
             }
         }
 
+        // Only the aggregated words go out: text and how many ballots, never whose.
+        $words = $cloud
+            ? Tally::words($this->repo->word_rows($poll_id), $this->repo->hidden_words($poll_id))
+            : [];
+
         $kind = (string) $poll['kind'];
-        $dots = (string) $poll['selection'] === 'dots';
         $public_choices = [];
         $index = 0;
         foreach ($choices as $choice) {
@@ -68,8 +77,9 @@ class Presenter
             'code' => (string) $poll['code'],
             'question' => (string) $poll['question'],
             'kind' => $kind,
-            'selection' => (string) $poll['selection'],
-            'budget' => $dots ? (int) $poll['budget'] : 0,
+            'selection' => $selection,
+            // Dots each voter has, or entries each voter can give on a word cloud.
+            'budget' => ($dots || $cloud) ? (int) $poll['budget'] : 0,
             'per_choice' => $dots ? (int) $poll['per_choice'] : 0,
             'spend_all' => $dots && !empty($poll['spend_all']),
             'status' => (string) $poll['status'],
@@ -77,9 +87,11 @@ class Presenter
             'ballots' => $this->repo->ballot_count($poll_id),
             'dots' => $dots ? array_sum($counts) : 0,
             'image' => $this->image((int) $poll['image_id'], 'large'),
-            // Dot polls send choice id => dots. The others send a list of choice ids.
-            'mine' => $dots ? $mine : array_keys($mine),
+            // Dot polls send choice id => dots, word clouds this voter's entries,
+            // and the others a list of choice ids.
+            'mine' => ($dots || $cloud) ? $mine : array_keys($mine),
             'choices' => $public_choices,
+            'words' => $words,
             'urls' => [
                 'poll' => Plugin::poll_url((string) $poll['code']),
                 'board' => Plugin::board_url((string) $poll['code']),

@@ -16,6 +16,8 @@
     var failures = 0;
     var TOP = 10;
     var showAll = false;
+    var paintMore = null;
+    var cloud = null;
 
     drawQr();
 
@@ -24,8 +26,14 @@
         form.addEventListener("submit", onSubmit);
     }
     var dots = isDots() && form ? bindDots() : null;
+    if (isWords()) {
+        var cloudHost = document.querySelector("[data-poller-cloud]");
+        if (cloudHost && typeof window.pollerCloud === "function") {
+            cloud = window.pollerCloud(cloudHost);
+        }
+    }
     bindMore();
-    if (isDots()) {
+    if (isDots() || isWords()) {
         paintResults();
     }
 
@@ -59,6 +67,15 @@
         return state.selection === "dots";
     }
 
+    function isWords() {
+        return state.selection === "words";
+    }
+
+    // Matches the server's key closely enough to mark this voter's own words.
+    function wordKey(text) {
+        return String(text).toLowerCase();
+    }
+
     function format(template, values) {
         var i = 0;
         return String(template).replace(/%(\d\$)?s/g, function (match, position) {
@@ -67,7 +84,8 @@
         });
     }
 
-    // Dot polls send choice id => dots. The others send a list of choice ids.
+    // Dot polls send choice id => dots, word clouds this voter's entries,
+    // and the others a list of choice ids.
     function mineMap() {
         var out = {};
         var mine = state.mine || [];
@@ -98,11 +116,13 @@
         var nonce = state.nonce;
         var rest = state.rest;
         var restVotes = state.restVotes;
+        var moderate = state.moderate;
         state = next;
         state.i18n = i18n;
         state.nonce = nonce;
         state.rest = rest;
         state.restVotes = restVotes;
+        state.moderate = moderate;
     }
 
     function totalText(count) {
@@ -127,7 +147,11 @@
             byId[String(choice.id)] = choice;
         });
 
-        document.querySelectorAll(".poller-result").forEach(function (row) {
+        if (isWords()) {
+            paintWords();
+        }
+
+        document.querySelectorAll(".poller-result[data-choice]").forEach(function (row) {
             var choice = byId[row.getAttribute("data-choice")];
             if (!choice) {
                 return;
@@ -188,21 +212,117 @@
         }
         section.classList.add("poller-results--folded");
         more.hidden = false;
-        var paint = function () {
+        paintMore = function () {
+            var count = isWords() ? state.words.length : state.choices.length;
             section.classList.toggle("poller-results--folded", !showAll);
-            more.textContent = showAll ? state.i18n.showTop : format(state.i18n.showAll, [state.choices.length]);
+            more.hidden = count <= TOP;
+            more.textContent = showAll ? state.i18n.showTop : format(state.i18n.showAll, [count]);
             more.setAttribute("aria-expanded", showAll ? "true" : "false");
         };
         more.addEventListener("click", function () {
             showAll = !showAll;
-            paint();
+            paintMore();
         });
-        paint();
+        paintMore();
+    }
+
+    // The word list is rebuilt on each update: words come and go, unlike choices.
+    function paintWords() {
+        var words = state.words || [];
+        var list = document.querySelector("[data-poller-words]");
+        var empty = document.querySelector("[data-poller-empty]");
+        var yours = {};
+        (Array.isArray(state.mine) ? state.mine : []).forEach(function (text) {
+            yours[wordKey(text)] = true;
+        });
+
+        if (empty) {
+            empty.hidden = words.length > 0;
+        }
+        if (cloud) {
+            cloud.draw(words);
+        }
+        if (list) {
+            list.textContent = "";
+            words.forEach(function (word, rank) {
+                list.appendChild(wordRow(word, rank, !!yours[wordKey(word.text)]));
+            });
+        }
+        if (paintMore) {
+            paintMore();
+        }
+    }
+
+    function wordRow(word, rank, mine) {
+        var row = el("div", "poller-result" + (rank >= TOP ? " poller-result--extra" : ""));
+        row.setAttribute("data-word", word.key);
+        var label = el("div", "poller-result-label");
+        label.appendChild(el("span", "poller-result-name", word.text));
+        var badge = el("span", "poller-yours", state.i18n.yourWord);
+        badge.hidden = !mine;
+        label.appendChild(badge);
+        if (state.moderate) {
+            label.appendChild(hideForm(word));
+        }
+        row.appendChild(label);
+        row.appendChild(el("div", "poller-count", String(word.count)));
+        var track = el("div", "poller-track");
+        track.setAttribute("aria-hidden", "true");
+        var bar = el("span", "poller-bar");
+        bar.style.width = (state.ballots ? (word.count / state.ballots) * 100 : 0) + "%";
+        track.appendChild(bar);
+        row.appendChild(track);
+        return row;
+    }
+
+    // Same form the page renders for admins without JavaScript.
+    function hideForm(word) {
+        var m = state.moderate;
+        var form = el("form", "poller-hide-word");
+        form.method = "post";
+        form.action = m.url;
+        [
+            ["action", "poller_hide_word"],
+            ["poll_id", String(m.poll)],
+            ["_wpnonce", m.nonce],
+            ["_wp_http_referer", state.urls.poll],
+            ["word", word.text],
+            ["hide", "1"]
+        ].forEach(function (pair) {
+            var input = document.createElement("input");
+            input.type = "hidden";
+            input.name = pair[0];
+            input.value = pair[1];
+            form.appendChild(input);
+        });
+        var button = el("button", "", m.hide);
+        button.type = "submit";
+        button.setAttribute("aria-label", format(m.hideLabel, [word.text]));
+        form.appendChild(button);
+        return form;
+    }
+
+    function el(tag, className, text) {
+        var node = document.createElement(tag);
+        if (className) {
+            node.className = className;
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    function fillWords() {
+        var mine = Array.isArray(state.mine) ? state.mine : [];
+        form.querySelectorAll("[data-word-input]").forEach(function (input, index) {
+            input.value = mine[index] || "";
+        });
     }
 
     function paintMine() {
         var mine = mineMap();
-        document.querySelectorAll(".poller-yours").forEach(function (el) {
+        document.querySelectorAll(".poller-result[data-choice] .poller-yours").forEach(function (el) {
             var row = el.closest(".poller-result");
             var have = row ? mine[row.getAttribute("data-choice")] : 0;
             el.hidden = !have;
@@ -364,6 +484,12 @@
 
     function summary() {
         var parts = [totalText(state.ballots)];
+        if (isWords()) {
+            (state.words || []).forEach(function (word) {
+                parts.push(word.text + " " + word.count);
+            });
+            return parts.join(". ") + ".";
+        }
         state.choices.forEach(function (choice) {
             var count = String(choice.votes);
             if (isDots()) {
@@ -456,7 +582,17 @@
         }
         event.preventDefault();
         var choices;
-        if (dots) {
+        if (isWords()) {
+            choices = Array.prototype.map.call(form.querySelectorAll("[data-word-input]"), function (input) {
+                return input.value.trim();
+            }).filter(function (value) {
+                return value !== "";
+            });
+            if (!choices.length) {
+                showError(state.i18n.enterWord);
+                return;
+            }
+        } else if (dots) {
             choices = dots.picks();
             if (!Object.keys(choices).length) {
                 showError(state.i18n.placeDot);
@@ -497,6 +633,9 @@
                 return;
             }
             apply(result.body, true);
+            if (isWords()) {
+                fillWords();
+            }
         }).catch(function () {
             showError(state.i18n.voteFailed);
         }).then(function () {

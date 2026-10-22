@@ -23,7 +23,8 @@ class VoteService
     }
 
     /**
-     * @param array<mixed, mixed> $submitted A list of choice ids, or choice id => dots on a dot voting poll.
+     * @param array<mixed, mixed> $submitted A list of choice ids, choice id => dots on a dot voting poll,
+     *                                       or a list of entries on a word cloud poll.
      * @return array<string, mixed>|\WP_Error
      */
     public function vote(string $code, array $submitted)
@@ -53,11 +54,16 @@ class VoteService
             );
         }
 
-        $choices = $this->repo->get_choices((int) $poll['id']);
-        $allowed = array_map(static function ($choice) {
-            return (int) $choice['id'];
-        }, $choices);
-        $picked = BallotRules::weigh($poll, $submitted, $allowed);
+        $words = $poll['selection'] === 'words';
+        if ($words) {
+            $picked = BallotRules::words($submitted, (int) $poll['budget']);
+        } else {
+            $choices = $this->repo->get_choices((int) $poll['id']);
+            $allowed = array_map(static function ($choice) {
+                return (int) $choice['id'];
+            }, $choices);
+            $picked = BallotRules::weigh($poll, $submitted, $allowed);
+        }
         if ($picked['error'] !== null) {
             return self::choice_error($picked['error'], $poll);
         }
@@ -66,7 +72,11 @@ class VoteService
         $hash = Voter::hash($raw);
 
         try {
-            $this->repo->cast((int) $poll['id'], $hash, $picked['weights']);
+            if ($words) {
+                $this->repo->cast_words((int) $poll['id'], $hash, $picked['words']);
+            } else {
+                $this->repo->cast((int) $poll['id'], $hash, $picked['weights']);
+            }
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'closed') {
                 return new \WP_Error(
@@ -107,13 +117,20 @@ class VoteService
             'dots_budget' => 'poller_dots_budget',
             'dots_per_choice' => 'poller_dots_per_choice',
             'dots_spend_all' => 'poller_dots_spend_all',
+            'words_none' => 'poller_words_none',
+            'words_limit' => 'poller_words_limit',
+            'words_long' => 'poller_words_long',
+            'words_phrase' => 'poller_words_phrase',
         ];
+        if ($key === 'invalid' && ($poll['selection'] ?? '') === 'words') {
+            $map['invalid'] = 'poller_words_invalid';
+        }
         $code = $map[$key] ?? 'poller_choice';
         return new \WP_Error($code, (string) self::error_message($code, $poll), ['status' => 400]);
     }
 
     /**
-     * Message for a vote error code. Dot rules name the poll's own numbers.
+     * Message for a vote error code. Dot and word rules name the poll's own numbers.
      *
      * @param array<string, mixed> $poll
      */
@@ -159,6 +176,28 @@ class VoteService
                     _n('Use your %d dot.', 'Use all %d dots.', $budget, 'poller'),
                     $budget
                 );
+            case 'poller_words_none':
+                return __('Enter at least one word.', 'poller');
+            case 'poller_words_limit':
+                return sprintf(
+                    /* translators: %d is how many words each voter can enter. */
+                    _n('Enter no more than %d word.', 'Enter no more than %d words.', $budget, 'poller'),
+                    $budget
+                );
+            case 'poller_words_long':
+                return sprintf(
+                    /* translators: %d is the most characters in one entry. */
+                    __('Keep each entry to %d characters or fewer.', 'poller'),
+                    BallotRules::WORD_LENGTH
+                );
+            case 'poller_words_phrase':
+                return sprintf(
+                    /* translators: %d is the most words in one entry. */
+                    __('Keep each entry to %d words or fewer.', 'poller'),
+                    BallotRules::WORD_PHRASE
+                );
+            case 'poller_words_invalid':
+                return __('Those words could not be read. Try again.', 'poller');
         }
         return null;
     }

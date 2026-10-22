@@ -24,6 +24,17 @@ class BallotRules
 
     public const DEFAULT_BUDGET = 5;
 
+    /** Most entries one voter can give on a word cloud poll. */
+    public const MAX_WORDS = 10;
+
+    public const DEFAULT_WORDS = 3;
+
+    /** Longest word cloud entry, in characters. */
+    public const WORD_LENGTH = 24;
+
+    /** Most words in one word cloud phrase. */
+    public const WORD_PHRASE = 3;
+
     /**
      * @param array<int, mixed> $submitted
      * @param array<int, int> $allowed
@@ -107,6 +118,81 @@ class BallotRules
     }
 
     /**
+     * Tidy one word cloud entry. Returns the text to show and the key it is
+     * counted under, or null when there is nothing left (or it is not text).
+     *
+     * Whitespace is collapsed and punctuation at either end is dropped. The
+     * key is the same text in lowercase, so "Hope", "hope!" and " HOPE " match.
+     *
+     * @param mixed $value
+     * @return array{text: string, key: string}|null
+     */
+    public static function word($value): ?array
+    {
+        if (!is_string($value) && !is_int($value)) {
+            return null;
+        }
+        $text = preg_replace('/\p{C}+/u', ' ', (string) $value);
+        if ($text === null) {
+            return null;
+        }
+        $text = (string) preg_replace('/\s+/u', ' ', $text);
+        $text = (string) preg_replace('/^[\p{P}\s]+|[\p{P}\s]+$/u', '', $text);
+        if ($text === '') {
+            return null;
+        }
+        $key = function_exists('mb_strtolower') ? mb_strtolower($text, 'UTF-8') : strtolower($text);
+        return ['text' => $text, 'key' => $key];
+    }
+
+    /**
+     * A word cloud ballot is a list of entries. Empty entries are dropped,
+     * and an entry repeated on one ballot counts once.
+     *
+     * @param array<mixed, mixed> $submitted
+     * @return array{words: array<int, array{text: string, key: string}>, error: ?string}
+     */
+    public static function words(array $submitted, int $limit): array
+    {
+        $words = [];
+        $entries = 0;
+        foreach ($submitted as $value) {
+            if (is_string($value) && trim($value) === '') {
+                continue;
+            }
+            if (!is_string($value) && !is_int($value)) {
+                return ['words' => [], 'error' => 'invalid'];
+            }
+            if (preg_match('//u', (string) $value) !== 1) {
+                return ['words' => [], 'error' => 'invalid'];
+            }
+            $word = self::word($value);
+            if ($word === null) {
+                continue;
+            }
+            $entries++;
+            if ($entries > $limit) {
+                return ['words' => [], 'error' => 'words_limit'];
+            }
+            if (self::length($word['text']) > self::WORD_LENGTH) {
+                return ['words' => [], 'error' => 'words_long'];
+            }
+            if (count(explode(' ', $word['text'])) > self::WORD_PHRASE) {
+                return ['words' => [], 'error' => 'words_phrase'];
+            }
+            if (!isset($words[$word['key']])) {
+                $words[$word['key']] = $word;
+            }
+        }
+
+        if ($entries < 1) {
+            return ['words' => [], 'error' => 'words_none'];
+        }
+
+        return ['words' => array_values($words), 'error' => null];
+    }
+
+    /**
      * Check a ballot against a poll's rules and return choice id => weight.
      * Single and multi polls weigh every choice as 1.
      *
@@ -118,6 +204,10 @@ class BallotRules
     public static function weigh(array $poll, array $submitted, array $allowed): array
     {
         $selection = (string) ($poll['selection'] ?? 'single');
+        if ($selection === 'words') {
+            // Word cloud ballots carry text, not choice ids. See words().
+            return ['weights' => [], 'error' => 'invalid'];
+        }
         if ($selection === 'dots') {
             return self::dots(
                 $submitted,
@@ -141,6 +231,11 @@ class BallotRules
     public static function max_choices(string $selection): int
     {
         return $selection === 'dots' ? self::MAX_DOT_CHOICES : self::MAX_CHOICES;
+    }
+
+    private static function length(string $text): int
+    {
+        return function_exists('mb_strlen') ? mb_strlen($text, 'UTF-8') : strlen($text);
     }
 
     /**

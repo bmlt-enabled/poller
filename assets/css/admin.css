@@ -90,3 +90,11 @@
 #poller-choice-list {
     max-width: 36rem;
 }
+
+.poller-admin-words {
+    max-width: 36rem;
+}
+
+.poller-admin-words .poller-word-hidden td {
+    color: #646970;
+}

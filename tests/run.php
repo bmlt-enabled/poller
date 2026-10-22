@@ -172,6 +172,62 @@ poller_check(Tally::share(7, ['selection' => 'dots', 'dots' => 13, 'ballots' => 
 poller_check(Tally::share(3, ['selection' => 'multi', 'dots' => 0, 'ballots' => 4]) === 75.0, 'other shares are out of ballots');
 poller_check(Tally::share(3, ['selection' => 'dots', 'dots' => 0, 'ballots' => 0]) === 0.0, 'an empty tally has no share');
 
+// Word cloud: normalization.
+$poller_word = BallotRules::word("  \"Hope!!\"  ");
+poller_check($poller_word === ['text' => 'Hope', 'key' => 'hope'], 'a word drops outer punctuation and spaces');
+poller_check(BallotRules::word('HOPE')['key'] === BallotRules::word('hope.')['key'], 'case and punctuation variants share a key');
+poller_check(BallotRules::word("long \t\n  day")['text'] === 'long day', 'inner whitespace collapses to one space');
+poller_check(BallotRules::word("don't stop")['text'] === "don't stop", 'inner punctuation stays');
+poller_check(BallotRules::word('Élan')['key'] === 'élan', 'keys lowercase accented letters');
+poller_check(BallotRules::word('<3')['text'] === '<3', 'symbols are kept as typed');
+poller_check(BallotRules::word('...') === null, 'punctuation alone is empty');
+poller_check(BallotRules::word("calm\u{0007}") !== null && BallotRules::word("calm\u{0007}")['text'] === 'calm', 'control characters are dropped');
+poller_check(BallotRules::word(['hope']) === null, 'a non-string is not a word');
+
+// Word cloud: validation.
+$poller_words = BallotRules::words(['Hope', '', '  ', 'hope!', 'Long day'], 3);
+poller_check($poller_words['error'] === null && array_column($poller_words['words'], 'key') === ['hope', 'long day'], 'empty entries drop and repeats on one ballot count once');
+poller_check(BallotRules::words(['', ' ', '!!'], 3)['error'] === 'words_none', 'a word ballot needs one entry');
+poller_check(BallotRules::words([], 3)['error'] === 'words_none', 'an empty word ballot is rejected');
+poller_check(BallotRules::words(['a', 'b', 'c', 'd'], 3)['error'] === 'words_limit', 'more entries than the limit are rejected');
+poller_check(BallotRules::words(['a', 'b', 'c'], 3)['error'] === null, 'entries up to the limit are fine');
+poller_check(BallotRules::words([str_repeat('a', 24)], 3)['error'] === null, 'a 24-character entry is fine');
+poller_check(BallotRules::words([str_repeat('a', 25)], 3)['error'] === 'words_long', 'a 25-character entry is too long');
+poller_check(BallotRules::words([str_repeat('é', 24)], 3)['error'] === null, 'length counts characters, not bytes');
+poller_check(BallotRules::words(['one two three'], 3)['error'] === null, 'a three-word phrase is fine');
+poller_check(BallotRules::words(['one two three four'], 3)['error'] === 'words_phrase', 'a four-word phrase is rejected');
+poller_check(BallotRules::words([['nested']], 3)['error'] === 'invalid', 'a nested value is rejected');
+poller_check(BallotRules::words(["\xff\xfe"], 3)['error'] === 'invalid', 'invalid UTF-8 is rejected');
+poller_check(BallotRules::weigh(['selection' => 'words', 'budget' => 3], ['4'], $poller_items)['error'] === 'invalid', 'a word cloud never takes choice ids');
+$poller_again = BallotRules::words(array_column($poller_words['words'], 'text'), 3);
+poller_check($poller_again['words'] === $poller_words['words'], 'cleaned entries pass the locked re-check unchanged');
+
+// Word cloud: tally. One row per stored entry.
+$poller_rows = [
+    ['key' => 'hope', 'text' => 'Hope', 'count' => 1],
+    ['key' => 'hope', 'text' => 'hope', 'count' => 1],
+    ['key' => 'hope', 'text' => 'Hope', 'count' => 1],
+    ['key' => 'tired', 'text' => 'tired', 'count' => 1],
+    ['key' => 'calm', 'text' => 'Calm', 'count' => 1],
+    ['key' => 'calm', 'text' => 'calm', 'count' => 1],
+    ['key' => 'rude', 'text' => 'Rude', 'count' => 1],
+    ['key' => 'rude', 'text' => 'rude', 'count' => 1],
+    ['key' => '42', 'text' => '42', 'count' => 1],
+];
+$poller_cloud = Tally::words($poller_rows, ['rude']);
+poller_check(array_column($poller_cloud, 'key') === ['hope', 'calm', '42', 'tired'], 'words rank by ballots, then alphabetically');
+poller_check($poller_cloud[0] === ['text' => 'Hope', 'key' => 'hope', 'count' => 3], 'variants merge and show the most common spelling');
+poller_check($poller_cloud[1]['text'] === 'Calm', 'a spelling tie picks one the same way every time');
+poller_check(!in_array('rude', array_column($poller_cloud, 'key'), true), 'hidden words are left out');
+poller_check($poller_cloud[2]['key'] === '42', 'a number-like word keeps a string key');
+$poller_lots = [];
+for ($poller_i = 0; $poller_i < 150; $poller_i++) {
+    $poller_lots[] = ['key' => 'w' . $poller_i, 'text' => 'w' . $poller_i, 'count' => 1];
+}
+poller_check(count(Tally::words($poller_lots)) === 100, 'the payload carries the top 100 words');
+poller_check(count(Tally::words($poller_lots, [], 0)) === 150, 'a limit of 0 keeps every word');
+poller_check(array_keys($poller_cloud[0]) === ['text', 'key', 'count'], 'a tallied word carries no ballot or token');
+
 if ($poller_failed > 0) {
     fwrite(STDERR, "{$poller_failed} failed\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
     exit(1);
