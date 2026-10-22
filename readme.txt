@@ -4,7 +4,7 @@ Tags: poll, voting, qr-code, anonymous
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,6 +26,10 @@ Votes are anonymous. The plugin stores a salted hash of a random browser token a
 4. Open the room display and let people scan or enter the code.
 
 == Changelog ==
+
+= 0.2.0 =
+* Dot voting: each person spreads a set number of dots across up to 100 items, with optional stacking and "use every dot" rules.
+* Paste a list of choices, one per line.
 
 = 0.1.0 =
 * First release.

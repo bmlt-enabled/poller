@@ -85,11 +85,13 @@ class Frontend
             $this->redirect_vote_error($target, 'poller_nonce');
         }
 
+        // Values stay as text so BallotRules rejects a negative or fractional
+        // count instead of absint() quietly turning it into a valid one.
         $choices = [];
         if (isset($_POST['choices']) && is_array($_POST['choices'])) {
-            $choices = map_deep(wp_unslash($_POST['choices']), 'absint');
+            $choices = map_deep(wp_unslash($_POST['choices']), 'sanitize_text_field');
         } elseif (isset($_POST['choices'])) {
-            $choices = [absint(wp_unslash($_POST['choices']))];
+            $choices = [sanitize_text_field(wp_unslash($_POST['choices']))];
         }
 
         $result = $this->votes->vote($code, $choices);
@@ -231,8 +233,18 @@ class Frontend
     private function summary(array $state): string
     {
         $parts = [self::total_label((int) $state['ballots'], $state)];
+        $dots = $state['selection'] === 'dots';
         foreach ($state['choices'] as $choice) {
-            $parts[] = $choice['label'] . ' ' . (int) $choice['votes'];
+            $votes = (int) $choice['votes'];
+            if (!$dots) {
+                $parts[] = $choice['label'] . ' ' . $votes;
+                continue;
+            }
+            $parts[] = $choice['label'] . ' ' . ($votes === 1 ? __('1 dot', 'poller') : sprintf(
+                /* translators: %s is the number of dots. */
+                __('%s dots', 'poller'),
+                number_format_i18n($votes)
+            ));
         }
         return implode('. ', $parts) . '.';
     }

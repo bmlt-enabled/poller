@@ -120,6 +120,12 @@ poller_check($poller_negative['error'] === 'invalid', 'negative dots are rejecte
 $poller_fraction = BallotRules::dots([4 => '1.5'], $poller_items, 5, 3, false);
 poller_check($poller_fraction['error'] === 'invalid', 'fractional dots are rejected');
 
+$poller_form = BallotRules::dots(['4' => '-2', '9' => '1'], $poller_items, 5, 3, false);
+poller_check($poller_form['error'] === 'invalid', 'a negative count posted from the form is rejected');
+
+$poller_form_fraction = BallotRules::dots(['4' => '1.5'], $poller_items, 5, 3, false);
+poller_check($poller_form_fraction['error'] === 'invalid', 'a fractional count posted from the form is rejected');
+
 $poller_list = BallotRules::dots([4, 9], $poller_items, 5, 3, false);
 poller_check($poller_list['error'] === 'invalid', 'a plain list of ids is not a dot ballot');
 

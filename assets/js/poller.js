@@ -318,6 +318,9 @@
             if (!input.matches || !input.matches("[data-dot-input]")) {
                 return;
             }
+            // Only checkboxes can overshoot here. Once this script runs, CSS hides
+            // the <select>, so the − / + stepper is the only way to change those
+            // counts, and its click handler already stops at the budget.
             if (placed() > budget && input.type === "checkbox") {
                 input.checked = false;
             }
@@ -362,7 +365,11 @@
     function summary() {
         var parts = [totalText(state.ballots)];
         state.choices.forEach(function (choice) {
-            parts.push(choice.label + " " + choice.votes);
+            var count = String(choice.votes);
+            if (isDots()) {
+                count = choice.votes === 1 ? state.i18n.oneDot : state.i18n.manyDots.replace("%s", count);
+            }
+            parts.push(choice.label + " " + count);
         });
         return parts.join(". ") + ".";
     }

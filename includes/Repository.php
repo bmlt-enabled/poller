@@ -253,6 +253,59 @@ class Repository
             return false;
         }
 
+        $this->write_choices($poll_id, $choices);
+        $this->touch($poll_id);
+        return true;
+    }
+
+    /**
+     * Update a poll, and its choices when nobody has voted yet. The poll row
+     * stays locked for the whole save, the same lock cast() takes, so a vote
+     * sees either the old choices and rules or the new ones, never a mix.
+     *
+     * Returns false when there are ballots. Then the choices and voting rules
+     * already stored are kept, and only the other fields are saved.
+     *
+     * @param array<string, mixed> $fields
+     * @param array<int, array{label: string, image_id: int}>|null $choices null leaves the choices alone.
+     */
+    public function save_poll(int $id, array $fields, ?array $choices): bool
+    {
+        global $wpdb;
+
+        $wpdb->query('START TRANSACTION');
+        $rules = $wpdb->get_row($wpdb->prepare(
+            'SELECT kind, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
+            $this->table('polls'),
+            $id
+        ), ARRAY_A);
+        if (!is_array($rules)) {
+            $wpdb->query('ROLLBACK');
+            return false;
+        }
+
+        $open = $this->ballot_count($id) === 0;
+        if ($open && $choices !== null) {
+            $this->write_choices($id, $choices);
+        } elseif (!$open) {
+            $fields = [
+                'kind' => (string) $rules['kind'],
+                'selection' => (string) $rules['selection'],
+                'budget' => (int) $rules['budget'],
+                'per_choice' => (int) $rules['per_choice'],
+                'spend_all' => !empty($rules['spend_all']),
+            ] + $fields;
+        }
+        $this->update_poll($id, $fields);
+        $wpdb->query('COMMIT');
+        return $open;
+    }
+
+    /**
+     * @param array<int, array{label: string, image_id: int}> $choices
+     */
+    private function write_choices(int $poll_id, array $choices): void
+    {
         global $wpdb;
 
         $wpdb->delete($this->table('choices'), ['poll_id' => $poll_id], ['%d']);
@@ -270,8 +323,6 @@ class Repository
             );
             $position++;
         }
-        $this->touch($poll_id);
-        return true;
     }
 
     /**

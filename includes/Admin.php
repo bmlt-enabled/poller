@@ -140,12 +140,8 @@ class Admin
         }
 
         $id = (int) $existing['id'];
-        $notice = 'saved';
-        if (!$locked && !$this->repo->replace_choices($id, $this->choice_rows($input))) {
-            $fields = $this->rule_fields($existing) + $fields;
-            $notice = 'kept';
-        }
-        $this->repo->update_poll($id, $fields);
+        $saved = $this->repo->save_poll($id, $fields, $locked ? null : $this->choice_rows($input));
+        $notice = (!$locked && !$saved) ? 'kept' : 'saved';
 
         wp_safe_redirect(admin_url('admin.php?page=poller-edit&poll=' . $id . '&poller_notice=' . $notice));
         exit;
