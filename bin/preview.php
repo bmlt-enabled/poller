@@ -49,6 +49,13 @@ if (!function_exists('__')) {
         return $text;
     }
 }
+if (!function_exists('_n')) {
+    function _n($single, $plural, $number, $domain = null)
+    {
+        unset($domain);
+        return (int) $number === 1 ? $single : $plural;
+    }
+}
 if (!function_exists('wp_unslash')) {
     function wp_unslash($value)
     {
@@ -63,17 +70,19 @@ if (!function_exists('sanitize_text_field')) {
 }
 // phpcs:enable WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
 
+require_once dirname(__DIR__) . '/includes/Tally.php';
+
 function poller_preview_svg(string $color): string
 {
     $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800"><rect width="800" height="800" fill="' . $color . '"/></svg>';
     return 'data:image/svg+xml,' . rawurlencode($svg);
 }
 
-function poller_preview_client(array $state): array
+function poller_preview_client(array $state, string $view): array
 {
     $state['nonce'] = 'preview';
-    $state['rest'] = '/api/poll';
-    $state['restVotes'] = '/api/votes';
+    $state['rest'] = '/api/poll?view=' . rawurlencode($view);
+    $state['restVotes'] = '/api/votes?view=' . rawurlencode($view);
     $state['i18n'] = [
         'oneVote' => '1 vote',
         'manyVotes' => '%s votes',
@@ -88,6 +97,19 @@ function poller_preview_client(array $state): array
         'voteFailed' => 'The vote did not save. Try again.',
         'qr' => 'QR code that opens this poll',
     ];
+    if ($state['selection'] === 'dots') {
+        $state['i18n'] += [
+            'dotsLeft' => (int) $state['budget'] === 1 ? '%1$s of %2$s dot left' : '%1$s of %2$s dots left',
+            'toPlaceOne' => '1 dot left to place',
+            'toPlaceMany' => '%s dots left to place',
+            'placeDot' => 'Place a dot to vote',
+            'yourDots' => 'Your dots: %s',
+            'oneDot' => '1 dot',
+            'manyDots' => '%s dots',
+            'showAll' => 'Show all %s',
+            'showTop' => 'Show the top 10',
+        ];
+    }
     return $state;
 }
 
@@ -98,9 +120,13 @@ function poller_preview_text_state(): array
         'question' => 'Where should we meet next month?',
         'kind' => 'text',
         'selection' => 'single',
+        'budget' => 0,
+        'per_choice' => 0,
+        'spend_all' => false,
         'status' => 'open',
         'revision' => 7,
         'ballots' => 18,
+        'dots' => 0,
         'image' => null,
         'mine' => [],
         'choices' => [
@@ -131,6 +157,55 @@ function poller_preview_picture_state(): array
     return $state;
 }
 
+/**
+ * A 30-item dot poll. Stacking is on for "dots" and off for "dots-toggle".
+ */
+function poller_preview_dots_state(bool $stacking): array
+{
+    $state = poller_preview_text_state();
+    $state['question'] = 'Which topics should the next workshop cover?';
+    $state['selection'] = 'dots';
+    $state['budget'] = 5;
+    $state['per_choice'] = $stacking ? 3 : 1;
+    $state['spend_all'] = $stacking;
+    $state['ballots'] = 12;
+    $state['revision'] = 3;
+    $topics = ['Sponsorship', 'Service structure', 'Literature', 'Public relations', 'Phone line', 'Website', 'Meeting list', 'Treasury', 'Elections', 'Outreach', 'Hospitals and institutions', 'Newcomers', 'Translation', 'Archives', 'Events', 'Workshops', 'Budgets', 'Group conscience', 'Trusted servants', 'Rotation', 'Anonymity online', 'Social media', 'Accessibility', 'Rural meetings', 'Virtual meetings', 'Youth', 'Literature storage', 'Insurance', 'Venue rent', 'Coffee'];
+    $votes = [9, 4, 7, 2, 0, 11, 3, 5, 1, 6, 0, 8, 0, 2, 3, 1, 0, 0, 4, 0, 2, 0, 1, 0, 3, 0, 0, 1, 0, 2];
+    $state['choices'] = [];
+    foreach ($topics as $index => $label) {
+        $state['choices'][] = ['id' => $index + 1, 'label' => $label, 'votes' => $votes[$index], 'image' => null];
+    }
+    $state['dots'] = array_sum($votes);
+    return $state;
+}
+
+function poller_preview_view_state(string $view): array
+{
+    if ($view === 'pictures') {
+        return poller_preview_picture_state();
+    }
+    if ($view === 'dots' || $view === 'dots-board') {
+        return poller_preview_dots_state(true);
+    }
+    if ($view === 'dots-toggle') {
+        return poller_preview_dots_state(false);
+    }
+    $state = poller_preview_text_state();
+    if ($view === 'multi') {
+        $state['selection'] = 'multi';
+        $state['question'] = 'What should we bring?';
+        $state['choices'][0]['votes'] = 14;
+        $state['choices'][1]['votes'] = 9;
+        $state['choices'][2]['votes'] = 6;
+        $state['ballots'] = 18;
+    }
+    if ($view === 'closed') {
+        $state['status'] = 'closed';
+    }
+    return $state;
+}
+
 function poller_preview_render(string $view): string
 {
     $root = dirname(__DIR__);
@@ -150,28 +225,16 @@ function poller_preview_render(string $view): string
     } elseif ($view === 'error') {
         $error = 'That code has a character that is not used. Codes leave out 0, 1, I, L, and O.';
         $code_value = 'K7MQ20';
-    } elseif ($view === 'poll' || $view === 'pictures' || $view === 'multi' || $view === 'closed' || $view === 'board') {
-        if ($view === 'pictures' || $view === 'board') {
-            $state = $view === 'board' ? poller_preview_text_state() : poller_preview_picture_state();
-        }
-        if ($view === 'multi') {
-            $state['selection'] = 'multi';
-            $state['question'] = 'What should we bring?';
-            $state['choices'][0]['votes'] = 14;
-            $state['choices'][1]['votes'] = 9;
-            $state['choices'][2]['votes'] = 6;
-            $state['ballots'] = 18;
-        }
-        if ($view === 'closed') {
-            $state['status'] = 'closed';
-        }
-        $template = $view === 'board' ? 'board' : 'poll';
-        $class = $view === 'board' ? 'poller-body poller-body--board' : 'poller-body';
+    } elseif (in_array($view, ['poll', 'pictures', 'multi', 'closed', 'board', 'dots', 'dots-toggle', 'dots-board'], true)) {
+        $state = poller_preview_view_state($view);
+        $board = $view === 'board' || $view === 'dots-board';
+        $template = $board ? 'board' : 'poll';
+        $class = $board ? 'poller-body poller-body--board' : 'poller-body';
         $title = $state['question'];
-        $qr = $view === 'board';
+        $qr = $board;
     }
 
-    $client = poller_preview_client($state);
+    $client = poller_preview_client($state, $view);
     $ballots = (int) $state['ballots'];
     if ($ballots === 0) {
         $total_label = 'No votes yet';
@@ -179,6 +242,9 @@ function poller_preview_render(string $view): string
         $total_label = '1 vote';
     } else {
         $total_label = $ballots . ' votes';
+    }
+    if ($ballots > 0 && $state['selection'] === 'dots') {
+        $total_label .= ' · ' . $state['dots'] . ' dots';
     }
     $parts = [$total_label];
     foreach ($state['choices'] as $choice) {
@@ -255,28 +321,32 @@ function poller_preview_serve(): ?bool
     if ($path !== '/' && is_file($file)) {
         return false;
     }
+    // Read-only preview query: which sample poll the API answers for.
+    $view = isset($_GET['view']) ? sanitize_text_field(wp_unslash($_GET['view'])) : 'poll'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
     if ($path === '/api/poll') {
         header('Content-Type: application/json');
-        echo wp_json_encode(poller_preview_client(poller_preview_text_state()));
+        echo wp_json_encode(poller_preview_client(poller_preview_view_state($view), $view));
         return null;
     }
     if ($path === '/api/votes') {
         $payload = json_decode((string) file_get_contents('php://input'), true);
-        $ids = [];
-        if (is_array($payload) && isset($payload['choices']) && is_array($payload['choices'])) {
-            $ids = array_map('intval', $payload['choices']);
-        }
-        $state = poller_preview_text_state();
-        $state['mine'] = $ids;
-        $state['ballots'] = 19;
-        $state['revision'] = 8;
+        $submitted = (is_array($payload) && isset($payload['choices']) && is_array($payload['choices'])) ? $payload['choices'] : [];
+        $state = poller_preview_view_state($view);
+        // Dot polls send choice id => dots. The others send a list of choice ids.
+        $weights = $state['selection'] === 'dots'
+            ? array_map('intval', $submitted)
+            : array_fill_keys(array_map('intval', $submitted), 1);
+        $state['mine'] = $state['selection'] === 'dots' ? $weights : array_keys($weights);
+        $state['ballots']++;
+        $state['revision']++;
         foreach ($state['choices'] as $index => $choice) {
-            if (in_array((int) $choice['id'], $ids, true)) {
-                $state['choices'][$index]['votes']++;
-            }
+            $state['choices'][$index]['votes'] += $weights[(int) $choice['id']] ?? 0;
+        }
+        if ($state['selection'] === 'dots') {
+            $state['dots'] += array_sum($weights);
         }
         header('Content-Type: application/json');
-        echo wp_json_encode($state);
+        echo wp_json_encode(poller_preview_client($state, $view));
         return null;
     }
     $routes = [
@@ -286,6 +356,9 @@ function poller_preview_serve(): ?bool
         '/multi' => 'multi',
         '/closed' => 'closed',
         '/board' => 'board',
+        '/dots' => 'dots',
+        '/dots-toggle' => 'dots-toggle',
+        '/dots-board' => 'dots-board',
         '/missing' => 'missing',
         '/error' => 'error',
     ];
@@ -301,14 +374,22 @@ function poller_preview_serve(): ?bool
 function poller_preview_self_check(): void
 {
     $failed = 0;
-    foreach (['join', 'poll', 'pictures', 'multi', 'closed', 'board', 'missing', 'error'] as $view) {
+    foreach (['join', 'poll', 'pictures', 'multi', 'closed', 'board', 'dots', 'dots-toggle', 'dots-board', 'missing', 'error'] as $view) {
         $html = poller_preview_render($view);
-        if (!str_contains($html, 'Poller') && $view !== 'board') {
+        if (str_starts_with($view, 'dots') && !str_contains($html, 'poller-results--ranked')) {
+            fwrite(STDERR, "FAIL: {$view} is missing the ranked tally\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            $failed++;
+        }
+        if (($view === 'dots' || $view === 'dots-toggle') && !str_contains($html, 'name="choices[1]"')) {
+            fwrite(STDERR, "FAIL: {$view} is missing the dot controls\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+            $failed++;
+        }
+        if (!str_contains($html, 'Poller') && $view !== 'board' && $view !== 'dots-board') {
             fwrite(STDERR, "FAIL: {$view} did not render\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             $failed++;
             continue;
         }
-        if ($view === 'board' && !str_contains($html, 'K7MQ2P')) {
+        if (($view === 'board' || $view === 'dots-board') && !str_contains($html, 'K7MQ2P')) {
             fwrite(STDERR, "FAIL: board is missing the code\n"); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
             $failed++;
         }

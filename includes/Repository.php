@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 
 class Repository
 {
-    public const DB_VERSION = '1';
+    public const DB_VERSION = '2';
     public const VERSION_OPTION = 'poller_db_version';
 
     public function install(): void
@@ -42,6 +42,9 @@ class Repository
             image_id bigint(20) unsigned NOT NULL DEFAULT 0,
             kind varchar(16) NOT NULL DEFAULT 'text',
             selection varchar(16) NOT NULL DEFAULT 'single',
+            budget smallint unsigned NOT NULL DEFAULT 0,
+            per_choice smallint unsigned NOT NULL DEFAULT 0,
+            spend_all tinyint(1) unsigned NOT NULL DEFAULT 0,
             status varchar(16) NOT NULL DEFAULT 'open',
             revision bigint(20) unsigned NOT NULL DEFAULT 0,
             created_at datetime NOT NULL,
@@ -74,6 +77,7 @@ class Repository
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             ballot_id bigint(20) unsigned NOT NULL,
             choice_id bigint(20) unsigned NOT NULL,
+            weight smallint unsigned NOT NULL DEFAULT 1,
             PRIMARY KEY  (id),
             UNIQUE KEY ballot_choice (ballot_id, choice_id),
             KEY choice_id (choice_id)
@@ -110,12 +114,15 @@ class Repository
                 'image_id' => $data['image_id'],
                 'kind' => $data['kind'],
                 'selection' => $data['selection'],
+                'budget' => $data['budget'],
+                'per_choice' => $data['per_choice'],
+                'spend_all' => $data['spend_all'] ? 1 : 0,
                 'status' => $data['status'],
                 'revision' => 0,
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-            ['%s', '%s', '%s', '%d', '%s', '%s', '%s', '%d', '%s', '%s']
+            ['%s', '%s', '%s', '%d', '%s', '%s', '%d', '%d', '%d', '%s', '%d', '%s', '%s']
         );
 
         return (int) $wpdb->insert_id;
@@ -136,11 +143,14 @@ class Repository
                 'image_id' => $data['image_id'],
                 'kind' => $data['kind'],
                 'selection' => $data['selection'],
+                'budget' => $data['budget'],
+                'per_choice' => $data['per_choice'],
+                'spend_all' => $data['spend_all'] ? 1 : 0,
                 'status' => $data['status'],
                 'updated_at' => $this->now(),
             ],
             ['id' => $id],
-            ['%s', '%s', '%d', '%s', '%s', '%s', '%s'],
+            ['%s', '%s', '%d', '%s', '%s', '%d', '%d', '%d', '%s', '%s'],
             ['%d']
         );
         $this->touch($id);
@@ -184,7 +194,7 @@ class Repository
             $id
         ), ARRAY_A);
 
-        return is_array($row) ? $this->hydrate_poll($row) : null;
+        return is_array($row) ? self::hydrate_poll($row) : null;
     }
 
     public function get_poll_by_code(string $code): ?array
@@ -197,7 +207,7 @@ class Repository
             $code
         ), ARRAY_A);
 
-        return is_array($row) ? $this->hydrate_poll($row) : null;
+        return is_array($row) ? self::hydrate_poll($row) : null;
     }
 
     /**
@@ -219,7 +229,7 @@ class Repository
             return [];
         }
 
-        return array_map([$this, 'hydrate_poll'], $rows);
+        return array_map([self::class, 'hydrate_poll'], $rows);
     }
 
     public function next_code(): string
@@ -243,6 +253,59 @@ class Repository
             return false;
         }
 
+        $this->write_choices($poll_id, $choices);
+        $this->touch($poll_id);
+        return true;
+    }
+
+    /**
+     * Update a poll, and its choices when nobody has voted yet. The poll row
+     * stays locked for the whole save, the same lock cast() takes, so a vote
+     * sees either the old choices and rules or the new ones, never a mix.
+     *
+     * Returns false when there are ballots. Then the choices and voting rules
+     * already stored are kept, and only the other fields are saved.
+     *
+     * @param array<string, mixed> $fields
+     * @param array<int, array{label: string, image_id: int}>|null $choices null leaves the choices alone.
+     */
+    public function save_poll(int $id, array $fields, ?array $choices): bool
+    {
+        global $wpdb;
+
+        $wpdb->query('START TRANSACTION');
+        $rules = $wpdb->get_row($wpdb->prepare(
+            'SELECT kind, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
+            $this->table('polls'),
+            $id
+        ), ARRAY_A);
+        if (!is_array($rules)) {
+            $wpdb->query('ROLLBACK');
+            return false;
+        }
+
+        $open = $this->ballot_count($id) === 0;
+        if ($open && $choices !== null) {
+            $this->write_choices($id, $choices);
+        } elseif (!$open) {
+            $fields = [
+                'kind' => (string) $rules['kind'],
+                'selection' => (string) $rules['selection'],
+                'budget' => (int) $rules['budget'],
+                'per_choice' => (int) $rules['per_choice'],
+                'spend_all' => !empty($rules['spend_all']),
+            ] + $fields;
+        }
+        $this->update_poll($id, $fields);
+        $wpdb->query('COMMIT');
+        return $open;
+    }
+
+    /**
+     * @param array<int, array{label: string, image_id: int}> $choices
+     */
+    private function write_choices(int $poll_id, array $choices): void
+    {
         global $wpdb;
 
         $wpdb->delete($this->table('choices'), ['poll_id' => $poll_id], ['%d']);
@@ -260,8 +323,6 @@ class Repository
             );
             $position++;
         }
-        $this->touch($poll_id);
-        return true;
     }
 
     /**
@@ -304,14 +365,14 @@ class Repository
     }
 
     /**
-     * @return array<int, int> choice id => votes
+     * @return array<int, int> choice id => votes, or dots on a dot voting poll
      */
     public function choice_counts(int $poll_id): array
     {
         global $wpdb;
 
         $rows = $wpdb->get_results($wpdb->prepare(
-            'SELECT v.choice_id, COUNT(*) AS votes
+            'SELECT v.choice_id, SUM(v.weight) AS votes
             FROM %i v
             INNER JOIN %i b ON b.id = v.ballot_id
             WHERE b.poll_id = %d
@@ -354,32 +415,38 @@ class Repository
     }
 
     /**
-     * @return array<int, int>
+     * @return array<int, int> choice id => weight
      */
-    public function ballot_choice_ids(int $ballot_id): array
+    public function ballot_weights(int $ballot_id): array
     {
         global $wpdb;
 
-        $ids = $wpdb->get_col($wpdb->prepare(
-            'SELECT choice_id FROM %i WHERE ballot_id = %d',
+        $rows = $wpdb->get_results($wpdb->prepare(
+            'SELECT choice_id, weight FROM %i WHERE ballot_id = %d',
             $this->table('votes'),
             $ballot_id
-        ));
+        ), ARRAY_A);
 
-        if (!is_array($ids)) {
-            return [];
+        $weights = [];
+        if (!is_array($rows)) {
+            return $weights;
         }
-
-        return array_map('intval', $ids);
+        foreach ($rows as $row) {
+            $weights[(int) $row['choice_id']] = (int) $row['weight'];
+        }
+        return $weights;
     }
 
     /**
      * Replace this browser's ballot. Throws RuntimeException('closed')
      * or RuntimeException('invalid') after rolling back.
      *
-     * @param array<int, int> $choice_ids
+     * The weights are checked again against the locked poll row, so a rule
+     * change saved between the first check and this write cannot slip through.
+     *
+     * @param array<int, int> $weights choice id => weight
      */
-    public function cast(int $poll_id, string $voter_token, array $choice_ids): void
+    public function cast(int $poll_id, string $voter_token, array $weights): void
     {
         global $wpdb;
 
@@ -392,7 +459,7 @@ class Repository
         $wpdb->query('START TRANSACTION');
 
         $poll = $wpdb->get_row($wpdb->prepare(
-            'SELECT id, status FROM %i WHERE id = %d FOR UPDATE',
+            'SELECT id, status, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
             $polls,
             $poll_id
         ));
@@ -401,8 +468,10 @@ class Repository
             throw new \RuntimeException('closed');
         }
 
-        $choice_ids = array_values(array_map('intval', $choice_ids));
-        if (count($choice_ids) === 0) {
+        $choice_ids = array_values(array_map('intval', array_keys($weights)));
+        $submitted = $poll->selection === 'dots' ? $weights : $choice_ids;
+        $checked = BallotRules::weigh((array) $poll, $submitted, $choice_ids);
+        if (count($choice_ids) === 0 || $checked['error'] !== null || $checked['weights'] != $weights) {
             $wpdb->query('ROLLBACK');
             throw new \RuntimeException('invalid');
         }
@@ -473,8 +542,9 @@ class Repository
                 [
                     'ballot_id' => $ballot_id,
                     'choice_id' => $choice_id,
+                    'weight' => (int) $weights[$choice_id],
                 ],
-                ['%d', '%d']
+                ['%d', '%d', '%d']
             );
             if (!$ok) {
                 $wpdb->query('ROLLBACK');
@@ -514,7 +584,7 @@ class Repository
      * @param array<string, mixed> $row
      * @return array<string, mixed>
      */
-    private function hydrate_poll(array $row): array
+    public static function hydrate_poll(array $row): array
     {
         return [
             'id' => (int) $row['id'],
@@ -524,6 +594,9 @@ class Repository
             'image_id' => (int) $row['image_id'],
             'kind' => (string) $row['kind'],
             'selection' => (string) $row['selection'],
+            'budget' => (int) ($row['budget'] ?? 0),
+            'per_choice' => (int) ($row['per_choice'] ?? 0),
+            'spend_all' => !empty($row['spend_all']),
             'status' => (string) $row['status'],
             'revision' => (int) $row['revision'],
             'created_at' => (string) $row['created_at'],

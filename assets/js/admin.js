@@ -94,6 +94,28 @@
         });
     });
 
+    var dotsSettings = document.getElementById("poller-dots-settings");
+    var stacking = document.getElementById("poller-stacking");
+    var perChoiceRow = document.getElementById("poller-per-choice-row");
+    var paintSelection = function () {
+        var picked = document.querySelector('input[name="selection"]:checked');
+        var isDots = !!picked && picked.value === "dots";
+        wrap.dataset.max = isDots ? wrap.dataset.maxDots : wrap.dataset.maxSingle;
+        if (dotsSettings) {
+            dotsSettings.hidden = !isDots;
+        }
+        if (perChoiceRow && stacking) {
+            perChoiceRow.hidden = !stacking.checked;
+        }
+    };
+    document.querySelectorAll('input[name="selection"]').forEach(function (input) {
+        input.addEventListener("change", paintSelection);
+    });
+    if (stacking) {
+        stacking.addEventListener("change", paintSelection);
+    }
+    paintSelection();
+
     var add = document.getElementById("poller-add-choice");
     var template = document.getElementById("poller-choice-template");
     if (add && template) {

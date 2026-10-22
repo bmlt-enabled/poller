@@ -34,11 +34,12 @@ class Presenter
         if ($voter_hash) {
             $ballot = $this->repo->get_ballot($poll_id, $voter_hash);
             if ($ballot) {
-                $mine = $this->repo->ballot_choice_ids((int) $ballot['id']);
+                $mine = $this->repo->ballot_weights((int) $ballot['id']);
             }
         }
 
         $kind = (string) $poll['kind'];
+        $dots = (string) $poll['selection'] === 'dots';
         $public_choices = [];
         $index = 0;
         foreach ($choices as $choice) {
@@ -68,11 +69,16 @@ class Presenter
             'question' => (string) $poll['question'],
             'kind' => $kind,
             'selection' => (string) $poll['selection'],
+            'budget' => $dots ? (int) $poll['budget'] : 0,
+            'per_choice' => $dots ? (int) $poll['per_choice'] : 0,
+            'spend_all' => $dots && !empty($poll['spend_all']),
             'status' => (string) $poll['status'],
             'revision' => (int) $poll['revision'],
             'ballots' => $this->repo->ballot_count($poll_id),
+            'dots' => $dots ? array_sum($counts) : 0,
             'image' => $this->image((int) $poll['image_id'], 'large'),
-            'mine' => array_values(array_map('intval', $mine)),
+            // Dot polls send choice id => dots. The others send a list of choice ids.
+            'mine' => $dots ? $mine : array_keys($mine),
             'choices' => $public_choices,
             'urls' => [
                 'poll' => Plugin::poll_url((string) $poll['code']),

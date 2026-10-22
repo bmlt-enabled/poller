@@ -7,8 +7,10 @@ A WordPress plugin for anonymous polls. Someone creates a poll, puts the code an
 - Text choices, or picture choices
 - An optional picture shown with the question
 - One choice, or more than one
+- Dot voting: each person spreads a set number of dots across a long list (up to 100 items). Stacking dots on one item and "use every dot" are per-poll settings. The tally ranks items by dots
+- Paste a list to add one choice per line
 - Open or closed. Closing stops new votes and leaves the tally up
-- After the first vote, the choices stay put so the tally does not change shape
+- After the first vote, the choices and voting rules stay put so the tally does not change shape
 
 ## How people join
 

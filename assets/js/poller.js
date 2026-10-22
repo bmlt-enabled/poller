@@ -14,12 +14,19 @@
     var timer = null;
     var inflight = false;
     var failures = 0;
+    var TOP = 10;
+    var showAll = false;
 
     drawQr();
 
     var form = document.getElementById("poller-vote");
     if (form) {
         form.addEventListener("submit", onSubmit);
+    }
+    var dots = isDots() && form ? bindDots() : null;
+    bindMore();
+    if (isDots()) {
+        paintResults();
     }
 
     if (state.rest) {
@@ -48,13 +55,42 @@
         });
     }
 
+    function isDots() {
+        return state.selection === "dots";
+    }
+
+    function format(template, values) {
+        var i = 0;
+        return String(template).replace(/%(\d\$)?s/g, function (match, position) {
+            var index = position ? Number(position.charAt(0)) - 1 : i++;
+            return String(values[index]);
+        });
+    }
+
+    // Dot polls send choice id => dots. The others send a list of choice ids.
+    function mineMap() {
+        var out = {};
+        var mine = state.mine || [];
+        if (Array.isArray(mine)) {
+            mine.forEach(function (id) {
+                out[String(id)] = 1;
+            });
+            return out;
+        }
+        Object.keys(mine).forEach(function (id) {
+            out[id] = Number(mine[id]);
+        });
+        return out;
+    }
+
     function identity(value) {
         var image = value.image && value.image.url ? value.image.url : "";
         var choices = (value.choices || []).map(function (choice) {
             var picture = choice.image && choice.image.url ? choice.image.url : "";
             return [choice.id, choice.label, picture].join("|");
         }).join("\n");
-        return value.question + "\n" + image + "\n" + choices;
+        var rules = [value.selection, value.budget, value.per_choice, value.spend_all].join("|");
+        return value.question + "\n" + image + "\n" + rules + "\n" + choices;
     }
 
     function merge(next) {
@@ -73,10 +109,11 @@
         if (!count) {
             return state.i18n.noVotes;
         }
-        if (count === 1) {
-            return state.i18n.oneVote;
+        var text = count === 1 ? state.i18n.oneVote : state.i18n.manyVotes.replace("%s", String(count));
+        if (isDots()) {
+            text += " · " + (state.dots === 1 ? state.i18n.oneDot : state.i18n.manyDots.replace("%s", String(state.dots)));
         }
-        return state.i18n.manyVotes.replace("%s", String(count));
+        return text;
     }
 
     function paintResults() {
@@ -101,10 +138,15 @@
                 count.textContent = String(choice.votes);
             }
             if (bar) {
-                var pct = state.ballots ? (choice.votes / state.ballots) * 100 : 0;
+                var total = isDots() ? state.dots : state.ballots;
+                var pct = total ? (choice.votes / total) * 100 : 0;
                 bar.style.width = pct + "%";
             }
         });
+
+        if (isDots()) {
+            rankRows();
+        }
 
         var isClosed = state.status !== "open";
         var closed = document.querySelector("[data-poller-closed]");
@@ -116,25 +158,218 @@
         }
     }
 
-    function paintMine() {
-        var mine = {};
-        (state.mine || []).forEach(function (id) {
-            mine[String(id)] = true;
+    // Most dots first; ties keep the poll's order. Rows past the top 10 fold away.
+    function rankRows() {
+        var list = document.querySelector(".poller-result-list");
+        if (!list) {
+            return;
+        }
+        var order = state.choices.map(function (choice, index) {
+            return { choice: choice, index: index };
         });
+        order.sort(function (a, b) {
+            return (b.choice.votes - a.choice.votes) || (a.index - b.index);
+        });
+        order.forEach(function (item, rank) {
+            var row = list.querySelector('.poller-result[data-choice="' + String(item.choice.id) + '"]');
+            if (!row) {
+                return;
+            }
+            row.classList.toggle("poller-result--extra", rank >= TOP);
+            list.appendChild(row);
+        });
+    }
+
+    function bindMore() {
+        var more = document.querySelector("[data-poller-more]");
+        var section = document.querySelector(".poller-results");
+        if (!more || !section) {
+            return;
+        }
+        section.classList.add("poller-results--folded");
+        more.hidden = false;
+        var paint = function () {
+            section.classList.toggle("poller-results--folded", !showAll);
+            more.textContent = showAll ? state.i18n.showTop : format(state.i18n.showAll, [state.choices.length]);
+            more.setAttribute("aria-expanded", showAll ? "true" : "false");
+        };
+        more.addEventListener("click", function () {
+            showAll = !showAll;
+            paint();
+        });
+        paint();
+    }
+
+    function paintMine() {
+        var mine = mineMap();
         document.querySelectorAll(".poller-yours").forEach(function (el) {
             var row = el.closest(".poller-result");
-            el.hidden = !row || !mine[row.getAttribute("data-choice")];
+            var have = row ? mine[row.getAttribute("data-choice")] : 0;
+            el.hidden = !have;
+            if (have && isDots()) {
+                el.textContent = format(state.i18n.yourDots, [have]);
+            }
         });
+        if (dots) {
+            dots.paint();
+            return;
+        }
         var button = form ? form.querySelector('button[type="submit"]') : null;
         if (button && button.dataset.saving !== "1") {
-            button.textContent = (state.mine || []).length ? state.i18n.updateVote : state.i18n.vote;
+            button.textContent = Object.keys(mine).length ? state.i18n.updateVote : state.i18n.vote;
         }
+    }
+
+    function bindDots() {
+        var budget = Number(state.budget) || 0;
+        var perChoice = Number(state.per_choice) || 1;
+        var counter = form.querySelector("[data-poller-counter]");
+        var rows = Array.prototype.slice.call(form.querySelectorAll("[data-dot-row]"));
+        var button = form.querySelector('button[type="submit"]');
+
+        function valueOf(input) {
+            if (input.type === "checkbox") {
+                return input.checked ? 1 : 0;
+            }
+            return Number(input.value) || 0;
+        }
+
+        function placed() {
+            return rows.reduce(function (sum, row) {
+                return sum + valueOf(row.querySelector("[data-dot-input]"));
+            }, 0);
+        }
+
+        function picks() {
+            var out = {};
+            rows.forEach(function (row) {
+                var input = row.querySelector("[data-dot-input]");
+                var n = valueOf(input);
+                var match = /\[(\d+)\]/.exec(input.name);
+                if (n > 0 && match) {
+                    out[match[1]] = n;
+                }
+            });
+            return out;
+        }
+
+        function paint() {
+            var used = placed();
+            var left = Math.max(0, budget - used);
+            if (counter) {
+                var pips = counter.querySelector(".poller-dots-pips");
+                if (pips) {
+                    pips.textContent = budget <= 12 ? new Array(used + 1).join("● ") + new Array(left + 1).join("○ ") : "";
+                }
+                var text = counter.querySelector(".poller-dots-left");
+                if (text) {
+                    text.textContent = format(state.i18n.dotsLeft, [left, budget]);
+                }
+            }
+            rows.forEach(function (row) {
+                var input = row.querySelector("[data-dot-input]");
+                var n = valueOf(input);
+                row.classList.toggle("is-on", n > 0);
+                if (input.type === "checkbox") {
+                    input.disabled = !input.checked && left === 0;
+                    return;
+                }
+                var count = row.querySelector(".poller-stepper-count");
+                if (count) {
+                    count.textContent = String(n);
+                }
+                var minus = row.querySelector('[data-step="-1"]');
+                var plus = row.querySelector('[data-step="1"]');
+                if (minus) {
+                    minus.disabled = n <= 0;
+                }
+                if (plus) {
+                    plus.disabled = n >= perChoice || left === 0;
+                }
+            });
+            if (!button || button.dataset.saving === "1") {
+                return;
+            }
+            if (state.spend_all && left > 0) {
+                button.disabled = true;
+                button.textContent = left === 1 ? state.i18n.toPlaceOne : state.i18n.toPlaceMany.replace("%s", String(left));
+            } else if (used === 0) {
+                button.disabled = true;
+                button.textContent = state.i18n.placeDot;
+            } else {
+                button.disabled = false;
+                button.textContent = Object.keys(mineMap()).length ? state.i18n.updateVote : state.i18n.vote;
+            }
+        }
+
+        form.classList.add("poller-dots-live");
+        if (counter) {
+            counter.hidden = false;
+        }
+        rows.forEach(function (row) {
+            var stepper = row.querySelector(".poller-stepper");
+            if (stepper) {
+                stepper.hidden = false;
+            }
+        });
+
+        form.addEventListener("change", function (event) {
+            var input = event.target;
+            if (!input.matches || !input.matches("[data-dot-input]")) {
+                return;
+            }
+            // Only checkboxes can overshoot here. Once this script runs, CSS hides
+            // the <select>, so the − / + stepper is the only way to change those
+            // counts, and its click handler already stops at the budget.
+            if (placed() > budget && input.type === "checkbox") {
+                input.checked = false;
+            }
+            paint();
+        });
+
+        form.addEventListener("click", function (event) {
+            var step = event.target.closest("[data-step]");
+            if (!step) {
+                return;
+            }
+            var row = step.closest("[data-dot-row]");
+            var select = row ? row.querySelector("select[data-dot-input]") : null;
+            if (!select) {
+                return;
+            }
+            var delta = Number(step.getAttribute("data-step"));
+            var next = Math.min(perChoice, Math.max(0, valueOf(select) + delta));
+            if (delta > 0 && placed() >= budget) {
+                return;
+            }
+            select.value = String(next);
+            paint();
+        });
+
+        var filterWrap = form.querySelector("[data-poller-filter]");
+        var filter = filterWrap ? filterWrap.querySelector("input") : null;
+        if (filter) {
+            filterWrap.hidden = false;
+            filter.addEventListener("input", function () {
+                var needle = filter.value.trim().toLowerCase();
+                rows.forEach(function (row) {
+                    row.hidden = needle !== "" && (row.getAttribute("data-label") || "").indexOf(needle) === -1;
+                });
+            });
+        }
+
+        paint();
+        return { paint: paint, picks: picks };
     }
 
     function summary() {
         var parts = [totalText(state.ballots)];
         state.choices.forEach(function (choice) {
-            parts.push(choice.label + " " + choice.votes);
+            var count = String(choice.votes);
+            if (isDots()) {
+                count = choice.votes === 1 ? state.i18n.oneDot : state.i18n.manyDots.replace("%s", count);
+            }
+            parts.push(choice.label + " " + count);
         });
         return parts.join(". ") + ".";
     }
@@ -220,11 +455,21 @@
             return;
         }
         event.preventDefault();
-        var data = new FormData(form);
-        var choices = data.getAll("choices[]");
-        if (!choices.length) {
-            showError(state.selection === "multi" ? state.i18n.chooseSome : state.i18n.chooseOne);
-            return;
+        var choices;
+        if (dots) {
+            choices = dots.picks();
+            if (!Object.keys(choices).length) {
+                showError(state.i18n.placeDot);
+                return;
+            }
+        } else {
+            choices = new FormData(form).getAll("choices[]").map(function (value) {
+                return Number(value);
+            });
+            if (!choices.length) {
+                showError(state.selection === "multi" ? state.i18n.chooseSome : state.i18n.chooseOne);
+                return;
+            }
         }
         var button = form.querySelector('button[type="submit"]');
         button.disabled = true;
@@ -240,11 +485,7 @@
                 Accept: "application/json",
                 "X-Poller-Nonce": state.nonce
             },
-            body: JSON.stringify({
-                choices: choices.map(function (value) {
-                    return Number(value);
-                })
-            })
+            body: JSON.stringify({ choices: choices })
         }).then(function (res) {
             return res.json().then(function (body) {
                 return { ok: res.ok, body: body };

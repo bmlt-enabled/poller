@@ -85,11 +85,13 @@ class Frontend
             $this->redirect_vote_error($target, 'poller_nonce');
         }
 
+        // Values stay as text so BallotRules rejects a negative or fractional
+        // count instead of absint() quietly turning it into a valid one.
         $choices = [];
         if (isset($_POST['choices']) && is_array($_POST['choices'])) {
-            $choices = map_deep(wp_unslash($_POST['choices']), 'absint');
+            $choices = map_deep(wp_unslash($_POST['choices']), 'sanitize_text_field');
         } elseif (isset($_POST['choices'])) {
-            $choices = [absint(wp_unslash($_POST['choices']))];
+            $choices = [sanitize_text_field(wp_unslash($_POST['choices']))];
         }
 
         $result = $this->votes->vote($code, $choices);
@@ -150,13 +152,13 @@ class Frontend
         $body = $this->capture($view === 'board' ? 'board' : 'poll', [
             'state' => $state,
             'client' => $this->client_state($state),
-            'error' => $this->vote_error(),
+            'error' => $this->vote_error($state),
             'join_url' => Plugin::join_url(),
             'join_human' => $this->human_url(Plugin::join_url()),
             'post_url' => admin_url('admin-post.php'),
             'nonce' => wp_create_nonce('poller_vote_' . $state['code']),
             'can_manage' => current_user_can('manage_options'),
-            'total_label' => self::total_label((int) $state['ballots']),
+            'total_label' => self::total_label((int) $state['ballots'], $state),
             'summary' => $this->summary($state),
             'your_vote' => __('Your vote', 'poller'),
         ]);
@@ -190,27 +192,39 @@ class Frontend
             'voteFailed' => __('The vote did not save. Try again.', 'poller'),
             'qr' => __('QR code that opens this poll', 'poller'),
         ];
+        if ($state['selection'] === 'dots') {
+            $budget = (int) $state['budget'];
+            $state['i18n'] += [
+                /* translators: 1: dots not placed yet, 2: dots each voter has. */
+                'dotsLeft' => _n('%1$s of %2$s dot left', '%1$s of %2$s dots left', $budget, 'poller'),
+                'toPlaceOne' => __('1 dot left to place', 'poller'),
+                /* translators: %s is the number of dots not placed yet. */
+                'toPlaceMany' => __('%s dots left to place', 'poller'),
+                'placeDot' => __('Place a dot to vote', 'poller'),
+                /* translators: %s is how many dots this browser put on an item. */
+                'yourDots' => __('Your dots: %s', 'poller'),
+                'oneDot' => __('1 dot', 'poller'),
+                /* translators: %s is the number of dots. */
+                'manyDots' => __('%s dots', 'poller'),
+                /* translators: %s is the number of items. */
+                'showAll' => __('Show all %s', 'poller'),
+                'showTop' => __('Show the top 10', 'poller'),
+            ];
+        }
         return $state;
     }
 
-    private function vote_error(): string
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function vote_error(array $state): string
     {
         // Status key added by redirect_vote_error() and matched against a fixed list.
         if (!isset($_GET['vote'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
             return '';
         }
         $code = sanitize_key(wp_unslash($_GET['vote'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-        $map = [
-            'poller_nonce' => __('That vote did not go through. Vote again.', 'poller'),
-            'poller_closed' => __('This poll is closed.', 'poller'),
-            'poller_choice_one' => __('Choose one option.', 'poller'),
-            'poller_choice_some' => __('Choose at least one option.', 'poller'),
-            'poller_choice_invalid' => __('That choice is not on this poll.', 'poller'),
-            'poller_choice' => __('Choose an option to vote.', 'poller'),
-            'poller_rate' => __('Too many new votes from this network just now. Wait a moment and try again.', 'poller'),
-            'poller_missing' => __('That code does not match a poll.', 'poller'),
-        ];
-        return $map[$code] ?? '';
+        return (string) VoteService::error_message($code, $state);
     }
 
     /**
@@ -218,26 +232,50 @@ class Frontend
      */
     private function summary(array $state): string
     {
-        $parts = [self::total_label((int) $state['ballots'])];
+        $parts = [self::total_label((int) $state['ballots'], $state)];
+        $dots = $state['selection'] === 'dots';
         foreach ($state['choices'] as $choice) {
-            $parts[] = $choice['label'] . ' ' . (int) $choice['votes'];
+            $votes = (int) $choice['votes'];
+            if (!$dots) {
+                $parts[] = $choice['label'] . ' ' . $votes;
+                continue;
+            }
+            $parts[] = $choice['label'] . ' ' . ($votes === 1 ? __('1 dot', 'poller') : sprintf(
+                /* translators: %s is the number of dots. */
+                __('%s dots', 'poller'),
+                number_format_i18n($votes)
+            ));
         }
         return implode('. ', $parts) . '.';
     }
 
-    public static function total_label(int $ballots): string
+    /**
+     * @param array<string, mixed> $state
+     */
+    public static function total_label(int $ballots, array $state = []): string
     {
         if ($ballots === 0) {
             return __('No votes yet', 'poller');
         }
         if ($ballots === 1) {
-            return __('1 vote', 'poller');
+            $label = __('1 vote', 'poller');
+        } else {
+            $label = sprintf(
+                /* translators: %s is the number of ballots. */
+                __('%s votes', 'poller'),
+                number_format_i18n($ballots)
+            );
         }
-        return sprintf(
-            /* translators: %s is the number of ballots. */
-            __('%s votes', 'poller'),
-            number_format_i18n($ballots)
+        if (($state['selection'] ?? '') !== 'dots') {
+            return $label;
+        }
+        $dots = (int) $state['dots'];
+        $dots_label = $dots === 1 ? __('1 dot', 'poller') : sprintf(
+            /* translators: %s is the number of dots. */
+            __('%s dots', 'poller'),
+            number_format_i18n($dots)
         );
+        return $label . ' · ' . $dots_label;
     }
 
     private function human_url(string $url): string

@@ -23,7 +23,7 @@ class VoteService
     }
 
     /**
-     * @param array<int, mixed> $submitted
+     * @param array<mixed, mixed> $submitted A list of choice ids, or choice id => dots on a dot voting poll.
      * @return array<string, mixed>|\WP_Error
      */
     public function vote(string $code, array $submitted)
@@ -57,16 +57,16 @@ class VoteService
         $allowed = array_map(static function ($choice) {
             return (int) $choice['id'];
         }, $choices);
-        $picked = BallotRules::select($submitted, $allowed, (string) $poll['selection']);
+        $picked = BallotRules::weigh($poll, $submitted, $allowed);
         if ($picked['error'] !== null) {
-            return $this->choice_error($picked['error']);
+            return self::choice_error($picked['error'], $poll);
         }
 
         $raw = Voter::ensure();
         $hash = Voter::hash($raw);
 
         try {
-            $this->repo->cast((int) $poll['id'], $hash, $picked['ids']);
+            $this->repo->cast((int) $poll['id'], $hash, $picked['weights']);
         } catch (\RuntimeException $e) {
             if ($e->getMessage() === 'closed') {
                 return new \WP_Error(
@@ -94,14 +94,72 @@ class VoteService
         return $this->presenter->payload($fresh, $hash);
     }
 
-    private function choice_error(string $key): \WP_Error
+    /**
+     * @param array<string, mixed> $poll
+     */
+    private static function choice_error(string $key, array $poll): \WP_Error
     {
         $map = [
-            'one' => ['poller_choice_one', __('Choose one option.', 'poller')],
-            'some' => ['poller_choice_some', __('Choose at least one option.', 'poller')],
-            'invalid' => ['poller_choice_invalid', __('That choice is not on this poll.', 'poller')],
+            'one' => 'poller_choice_one',
+            'some' => 'poller_choice_some',
+            'invalid' => 'poller_choice_invalid',
+            'dots_none' => 'poller_dots_none',
+            'dots_budget' => 'poller_dots_budget',
+            'dots_per_choice' => 'poller_dots_per_choice',
+            'dots_spend_all' => 'poller_dots_spend_all',
         ];
-        $pair = $map[$key] ?? ['poller_choice', __('Choose an option to vote.', 'poller')];
-        return new \WP_Error($pair[0], $pair[1], ['status' => 400]);
+        $code = $map[$key] ?? 'poller_choice';
+        return new \WP_Error($code, (string) self::error_message($code, $poll), ['status' => 400]);
+    }
+
+    /**
+     * Message for a vote error code. Dot rules name the poll's own numbers.
+     *
+     * @param array<string, mixed> $poll
+     */
+    public static function error_message(string $code, array $poll): ?string
+    {
+        $budget = (int) ($poll['budget'] ?? 0);
+        $per_choice = (int) ($poll['per_choice'] ?? 0);
+
+        switch ($code) {
+            case 'poller_nonce':
+                return __('That vote did not go through. Vote again.', 'poller');
+            case 'poller_closed':
+                return __('This poll is closed.', 'poller');
+            case 'poller_choice_one':
+                return __('Choose one option.', 'poller');
+            case 'poller_choice_some':
+                return __('Choose at least one option.', 'poller');
+            case 'poller_choice_invalid':
+                return __('That choice is not on this poll.', 'poller');
+            case 'poller_choice':
+                return __('Choose an option to vote.', 'poller');
+            case 'poller_rate':
+                return __('Too many new votes from this network just now. Wait a moment and try again.', 'poller');
+            case 'poller_missing':
+                return __('That code does not match a poll.', 'poller');
+            case 'poller_dots_none':
+                return __('Place at least one dot.', 'poller');
+            case 'poller_dots_budget':
+                return sprintf(
+                    /* translators: %d is how many dots each voter has. */
+                    _n('Use no more than %d dot.', 'Use no more than %d dots.', $budget, 'poller'),
+                    $budget
+                );
+            case 'poller_dots_per_choice':
+                return sprintf(
+                    /* translators: %d is the most dots allowed on one item. */
+                    _n('No more than %d dot on one item.', 'No more than %d dots on one item.', $per_choice, 'poller'),
+                    $per_choice
+                );
+            case 'poller_dots_spend_all':
+                return sprintf(
+                    /* translators: %d is how many dots each voter has. */
+                    _n('Use your %d dot.', 'Use all %d dots.', $budget, 'poller'),
+                    $budget
+                );
+        }
+        return null;
     }
 }

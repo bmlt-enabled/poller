@@ -74,3 +74,19 @@
 .wrap [hidden] {
     display: none !important;
 }
+
+.form-table .poller-admin-dots {
+    max-width: 36rem;
+    margin: 0.5rem 0 1rem;
+    padding: 0.25rem 1rem 0.5rem;
+    border: 1px solid #c3c4c7;
+}
+
+.poller-admin-dots legend {
+    padding: 0 0.3rem;
+    font-weight: 600;
+}
+
+#poller-choice-list {
+    max-width: 36rem;
+}
