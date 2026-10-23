@@ -140,6 +140,7 @@ function poller_preview_text_state(): array
         'image' => null,
         'mine' => [],
         'words' => [],
+        'mine_keys' => [],
         'choices' => [
             ['id' => 1, 'label' => 'The library', 'votes' => 11, 'image' => null],
             ['id' => 2, 'label' => 'The park shelter', 'votes' => 4, 'image' => null],
@@ -198,8 +199,9 @@ function poller_preview_dots_state(bool $stacking): array
  */
 function poller_preview_word_rows(): array
 {
+    // Spelling => how many ballots typed it. Rows go out one per entry, like word_rows().
     $entries = [
-        'Hopeful' => 9, 'hopeful' => 2, 'Tired' => 7, 'grateful' => 6, 'Calm' => 5, 'Busy' => 4,
+        'hopeful' => 7, 'Hopeful' => 4, 'Tired' => 7, 'grateful' => 6, 'Calm' => 5, 'Busy' => 4,
         'connected' => 4, 'Long day' => 3, 'peaceful' => 3, 'Rested' => 2, 'curious' => 2,
         'Inspired' => 2, 'Full' => 1, 'Stretched thin' => 1, 'quiet' => 1, 'Okay' => 1,
         'Seen' => 1, 'Encouraged' => 1, 'Restless' => 1, 'Present' => 1, 'Home' => 1,
@@ -207,7 +209,9 @@ function poller_preview_word_rows(): array
     $rows = [];
     foreach ($entries as $text => $count) {
         $word = BmltEnabled\Poller\BallotRules::word($text);
-        $rows[] = ['key' => $word['key'], 'text' => $word['text'], 'count' => $count];
+        for ($i = 0; $i < $count; $i++) {
+            $rows[] = ['key' => $word['key'], 'text' => $word['text'], 'count' => 1];
+        }
     }
     return $rows;
 }
@@ -418,6 +422,7 @@ function poller_preview_serve(): ?bool
             }, $picked['words']);
             $state = poller_preview_words_state($extra);
             $state['mine'] = array_column($picked['words'], 'text');
+            $state['mine_keys'] = array_column($picked['words'], 'key');
             $state['ballots']++;
             $state['revision']++;
             header('Content-Type: application/json');

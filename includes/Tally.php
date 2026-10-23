@@ -58,9 +58,10 @@ class Tally
     }
 
     /**
-     * Word cloud tally from stored entries. Each row is one spelling of a key
-     * and how many ballots used that spelling; a ballot holds a key at most
-     * once, so the sum per key is the number of ballots that entered it.
+     * Word cloud tally from stored entries. Each row is a spelling of a key
+     * and how many ballots used it (Repository::word_rows() sends one row per
+     * entry, so the same spelling comes in many rows). A ballot holds a key
+     * at most once, so the sum per key is the number of ballots that entered it.
      *
      * Shows the most common spelling. Hidden keys are left out. Most ballots
      * first, then alphabetical, so the order is stable between refreshes.
@@ -73,7 +74,7 @@ class Tally
     {
         $skip = array_fill_keys($hidden, true);
         $totals = [];
-        $spelling = [];
+        $spellings = [];
         foreach ($rows as $row) {
             $key = (string) $row['key'];
             if ($key === '' || isset($skip[$key])) {
@@ -82,10 +83,21 @@ class Tally
             $count = (int) $row['count'];
             $text = (string) $row['text'];
             $totals[$key] = ($totals[$key] ?? 0) + $count;
-            $best = $spelling[$key] ?? null;
-            if ($best === null || $count > $best[1] || ($count === $best[1] && strcmp($text, $best[0]) < 0)) {
-                $spelling[$key] = [$text, $count];
+            $spellings[$key][$text] = ($spellings[$key][$text] ?? 0) + $count;
+        }
+
+        // Most used spelling per key, after every row is counted. A tie goes
+        // to the one that sorts first, so it is the same on every refresh.
+        $spelling = [];
+        foreach ($spellings as $key => $counts) {
+            $best = null;
+            foreach ($counts as $text => $count) {
+                $text = (string) $text;
+                if ($best === null || $count > $best[1] || ($count === $best[1] && strcmp($text, $best[0]) < 0)) {
+                    $best = [$text, $count];
+                }
             }
+            $spelling[$key] = $best;
         }
 
         $words = [];

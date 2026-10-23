@@ -124,6 +124,11 @@ class BallotRules
      * Whitespace is collapsed and punctuation at either end is dropped. The
      * key is the same text in lowercase, so "Hope", "hope!" and " HOPE " match.
      *
+     * Control characters, private-use characters, and the bidi overrides that
+     * could flip text on the room display are removed. Other format characters
+     * stay, so a joined emoji like a family or a flag keeps its joiners.
+     * With intl, text is put in NFC first so "café" typed either way matches.
+     *
      * @param mixed $value
      * @return array{text: string, key: string}|null
      */
@@ -132,9 +137,12 @@ class BallotRules
         if (!is_string($value) && !is_int($value)) {
             return null;
         }
-        $text = preg_replace('/\p{C}+/u', ' ', (string) $value);
+        $text = preg_replace('/[\p{Cc}\p{Co}\x{202A}-\x{202E}\x{2066}-\x{2069}]+/u', ' ', (string) $value);
         if ($text === null) {
             return null;
+        }
+        if (class_exists('Normalizer')) {
+            $text = (string) \Normalizer::normalize($text, \Normalizer::FORM_C);
         }
         $text = (string) preg_replace('/\s+/u', ' ', $text);
         $text = (string) preg_replace('/^[\p{P}\s]+|[\p{P}\s]+$/u', '', $text);

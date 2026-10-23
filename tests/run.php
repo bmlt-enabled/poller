@@ -183,6 +183,14 @@ poller_check(BallotRules::word('<3')['text'] === '<3', 'symbols are kept as type
 poller_check(BallotRules::word('...') === null, 'punctuation alone is empty');
 poller_check(BallotRules::word("calm\u{0007}") !== null && BallotRules::word("calm\u{0007}")['text'] === 'calm', 'control characters are dropped');
 poller_check(BallotRules::word(['hope']) === null, 'a non-string is not a word');
+$poller_family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+poller_check((BallotRules::words([$poller_family], 3)['words'][0]['text'] ?? null) === $poller_family, 'a joined emoji keeps its joiners and counts as one word');
+$poller_flag = "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}";
+poller_check(BallotRules::word($poller_flag)['text'] === $poller_flag, 'a flag emoji is stored as typed');
+poller_check(BallotRules::word("\u{202E}olleh")['text'] === 'olleh', 'bidi overrides are dropped');
+if (class_exists('Normalizer')) {
+    poller_check(BallotRules::word("cafe\u{0301}")['key'] === BallotRules::word("caf\u{00E9}")['key'], 'composed and decomposed accents share a key');
+}
 
 // Word cloud: validation.
 $poller_words = BallotRules::words(['Hope', '', '  ', 'hope!', 'Long day'], 3);
@@ -217,6 +225,11 @@ $poller_rows = [
 $poller_cloud = Tally::words($poller_rows, ['rude']);
 poller_check(array_column($poller_cloud, 'key') === ['hope', 'calm', '42', 'tired'], 'words rank by ballots, then alphabetically');
 poller_check($poller_cloud[0] === ['text' => 'Hope', 'key' => 'hope', 'count' => 3], 'variants merge and show the most common spelling');
+$poller_lower = [];
+foreach (['hope', 'hope', 'Hope', 'hope'] as $poller_text) {
+    $poller_lower[] = ['key' => 'hope', 'text' => $poller_text, 'count' => 1];
+}
+poller_check(Tally::words($poller_lower)[0]['text'] === 'hope', 'a lowercase majority beats a capitalized spelling that sorts first');
 poller_check($poller_cloud[1]['text'] === 'Calm', 'a spelling tie picks one the same way every time');
 poller_check(!in_array('rude', array_column($poller_cloud, 'key'), true), 'hidden words are left out');
 poller_check($poller_cloud[2]['key'] === '42', 'a number-like word keeps a string key');

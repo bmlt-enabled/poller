@@ -71,11 +71,6 @@
         return state.selection === "words";
     }
 
-    // Matches the server's key closely enough to mark this voter's own words.
-    function wordKey(text) {
-        return String(text).toLowerCase();
-    }
-
     function format(template, values) {
         var i = 0;
         return String(template).replace(/%(\d\$)?s/g, function (match, position) {
@@ -226,14 +221,15 @@
         paintMore();
     }
 
-    // The word list is rebuilt on each update: words come and go, unlike choices.
+    // Words come and go, unlike choices. Rows are matched by key and patched
+    // in place, so an admin's Hide button and keyboard focus survive a refresh.
     function paintWords() {
         var words = state.words || [];
         var list = document.querySelector("[data-poller-words]");
         var empty = document.querySelector("[data-poller-empty]");
         var yours = {};
-        (Array.isArray(state.mine) ? state.mine : []).forEach(function (text) {
-            yours[wordKey(text)] = true;
+        (state.mine_keys || []).forEach(function (key) {
+            yours[key] = true;
         });
 
         if (empty) {
@@ -243,9 +239,24 @@
             cloud.draw(words);
         }
         if (list) {
-            list.textContent = "";
+            var old = {};
+            list.querySelectorAll(".poller-result[data-word]").forEach(function (row) {
+                old[row.getAttribute("data-word")] = row;
+            });
             words.forEach(function (word, rank) {
-                list.appendChild(wordRow(word, rank, !!yours[wordKey(word.text)]));
+                var row = old[word.key];
+                if (row) {
+                    delete old[word.key];
+                } else {
+                    row = wordRow(word);
+                }
+                paintWordRow(row, word, rank, !!yours[word.key]);
+                if (list.children[rank] !== row) {
+                    list.insertBefore(row, list.children[rank] || null);
+                }
+            });
+            Object.keys(old).forEach(function (key) {
+                old[key].remove();
             });
         }
         if (paintMore) {
@@ -253,26 +264,38 @@
         }
     }
 
-    function wordRow(word, rank, mine) {
-        var row = el("div", "poller-result" + (rank >= TOP ? " poller-result--extra" : ""));
+    // Same markup the page renders for each word.
+    function wordRow(word) {
+        var row = el("div", "poller-result");
         row.setAttribute("data-word", word.key);
         var label = el("div", "poller-result-label");
-        label.appendChild(el("span", "poller-result-name", word.text));
-        var badge = el("span", "poller-yours", state.i18n.yourWord);
-        badge.hidden = !mine;
-        label.appendChild(badge);
+        label.appendChild(el("span", "poller-result-name"));
+        label.appendChild(el("span", "poller-yours", state.i18n.yourWord));
         if (state.moderate) {
             label.appendChild(hideForm(word));
         }
         row.appendChild(label);
-        row.appendChild(el("div", "poller-count", String(word.count)));
+        row.appendChild(el("div", "poller-count"));
         var track = el("div", "poller-track");
         track.setAttribute("aria-hidden", "true");
-        var bar = el("span", "poller-bar");
-        bar.style.width = (state.ballots ? (word.count / state.ballots) * 100 : 0) + "%";
-        track.appendChild(bar);
+        track.appendChild(el("span", "poller-bar"));
         row.appendChild(track);
         return row;
+    }
+
+    function paintWordRow(row, word, rank, mine) {
+        row.classList.toggle("poller-result--extra", rank >= TOP);
+        row.querySelector(".poller-result-name").textContent = word.text;
+        row.querySelector(".poller-yours").hidden = !mine;
+        row.querySelector(".poller-count").textContent = String(word.count);
+        row.querySelector(".poller-bar").style.width = (state.ballots ? (word.count / state.ballots) * 100 : 0) + "%";
+        // The most common spelling can change; hiding goes by its key either way.
+        var field = row.querySelector('.poller-hide-word input[name="word"]');
+        var button = row.querySelector(".poller-hide-word button");
+        if (field && button && state.moderate) {
+            field.value = word.text;
+            button.setAttribute("aria-label", format(state.moderate.hideLabel, [word.text]));
+        }
     }
 
     // Same form the page renders for admins without JavaScript.

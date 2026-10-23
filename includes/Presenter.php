@@ -92,12 +92,31 @@ class Presenter
             'mine' => ($dots || $cloud) ? $mine : array_keys($mine),
             'choices' => $public_choices,
             'words' => $words,
+            // Keys for this voter's own entries, so the page can mark "Your word"
+            // without guessing how the server lowercases.
+            'mine_keys' => $cloud ? self::word_keys($mine) : [],
             'urls' => [
                 'poll' => Plugin::poll_url((string) $poll['code']),
                 'board' => Plugin::board_url((string) $poll['code']),
                 'join' => Plugin::join_url(),
             ],
         ];
+    }
+
+    /**
+     * @param array<int, mixed> $entries
+     * @return array<int, string>
+     */
+    public static function word_keys(array $entries): array
+    {
+        $keys = [];
+        foreach ($entries as $entry) {
+            $word = BallotRules::word($entry);
+            if ($word !== null) {
+                $keys[] = $word['key'];
+            }
+        }
+        return $keys;
     }
 
     /**

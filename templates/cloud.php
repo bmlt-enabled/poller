@@ -21,13 +21,7 @@ if (!defined('ABSPATH')) {
 $poller_words = $state['words'];
 $poller_ballots = (int) $state['ballots'];
 $poller_top = $poller_words ? (int) $poller_words[0]['count'] : 0;
-$poller_yours = [];
-foreach ((array) $state['mine'] as $poller_entry) {
-    $poller_word = BmltEnabled\Poller\BallotRules::word($poller_entry);
-    if ($poller_word !== null) {
-        $poller_yours[$poller_word['key']] = true;
-    }
-}
+$poller_yours = array_fill_keys($state['mine_keys'], true);
 $poller_moderate = isset($moderate) && is_array($moderate) ? $moderate : null;
 ?>
 <section class="poller-results poller-results--ranked poller-results--cloud">
