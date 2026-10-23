@@ -88,7 +88,12 @@ class Frontend
         // Values stay as text so BallotRules rejects a negative or fractional
         // count instead of absint() quietly turning it into a valid one.
         $choices = [];
-        if (isset($_POST['choices']) && is_array($_POST['choices'])) {
+        if (isset($_POST['words']) && is_array($_POST['words'])) {
+            // Word cloud entries. BallotRules::words() drops control characters,
+            // and every place a word is shown escapes it. sanitize_text_field()
+            // would store "<3" as "&lt;3".
+            $choices = array_values(array_filter(wp_unslash($_POST['words']), 'is_string')); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+        } elseif (isset($_POST['choices']) && is_array($_POST['choices'])) {
             $choices = map_deep(wp_unslash($_POST['choices']), 'sanitize_text_field');
         } elseif (isset($_POST['choices'])) {
             $choices = [sanitize_text_field(wp_unslash($_POST['choices']))];
@@ -148,16 +153,35 @@ class Frontend
         $hash = Voter::hash(Voter::token());
         $state = $this->presenter->payload($poll, $hash);
         $title = (string) $state['question'];
+        $can_manage = current_user_can('manage_options');
+
+        // Hide buttons on the poll page's results, for admins. Never on the
+        // room display, which is up on a screen.
+        $moderate = null;
+        if ($can_manage && $view === 'poll' && $state['selection'] === 'words') {
+            $moderate = [
+                'url' => admin_url('admin-post.php'),
+                'poll' => (int) $poll['id'],
+                'nonce' => wp_create_nonce('poller_hide_word_' . (int) $poll['id']),
+                'hide' => __('Hide', 'poller'),
+                /* translators: %s is a word in the word cloud. */
+                'hideLabel' => __('Hide "%s" from the results', 'poller'),
+            ];
+        }
+
+        $client = $this->client_state($state);
+        $client['moderate'] = $moderate;
 
         $body = $this->capture($view === 'board' ? 'board' : 'poll', [
             'state' => $state,
-            'client' => $this->client_state($state),
+            'client' => $client,
+            'moderate' => $moderate,
             'error' => $this->vote_error($state),
             'join_url' => Plugin::join_url(),
             'join_human' => $this->human_url(Plugin::join_url()),
             'post_url' => admin_url('admin-post.php'),
             'nonce' => wp_create_nonce('poller_vote_' . $state['code']),
-            'can_manage' => current_user_can('manage_options'),
+            'can_manage' => $can_manage,
             'total_label' => self::total_label((int) $state['ballots'], $state),
             'summary' => $this->summary($state),
             'your_vote' => __('Your vote', 'poller'),
@@ -211,6 +235,16 @@ class Frontend
                 'showTop' => __('Show the top 10', 'poller'),
             ];
         }
+        if ($state['selection'] === 'words') {
+            $state['i18n'] += [
+                'enterWord' => __('Enter at least one word.', 'poller'),
+                'yourWord' => __('Your word', 'poller'),
+                'noWords' => __('Words will show up here as people answer.', 'poller'),
+                /* translators: %s is the number of words. */
+                'showAll' => __('Show all %s', 'poller'),
+                'showTop' => __('Show the top 10', 'poller'),
+            ];
+        }
         return $state;
     }
 
@@ -233,6 +267,12 @@ class Frontend
     private function summary(array $state): string
     {
         $parts = [self::total_label((int) $state['ballots'], $state)];
+        if ($state['selection'] === 'words') {
+            foreach ($state['words'] as $word) {
+                $parts[] = $word['text'] . ' ' . (int) $word['count'];
+            }
+            return implode('. ', $parts) . '.';
+        }
         $dots = $state['selection'] === 'dots';
         foreach ($state['choices'] as $choice) {
             $votes = (int) $choice['votes'];
@@ -317,6 +357,10 @@ class Frontend
         if ($qr) {
             wp_enqueue_script('poller-qrcode', POLLER_URL . 'assets/js/qrcode.js', [], POLLER_VERSION, false);
             $scripts[] = 'poller-qrcode';
+        }
+        if (str_contains($body, 'data-poller-cloud')) {
+            wp_enqueue_script('poller-cloud', POLLER_URL . 'assets/js/cloud.js', [], POLLER_VERSION, false);
+            $scripts[] = 'poller-cloud';
         }
         if ($qr || str_contains($body, 'id="poller-state"')) {
             wp_enqueue_script('poller', POLLER_URL . 'assets/js/poller.js', $qr ? ['poller-qrcode'] : [], POLLER_VERSION, false);

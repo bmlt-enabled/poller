@@ -13,6 +13,11 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if ($state['selection'] === 'words') {
+    require __DIR__ . '/cloud.php';
+    return;
+}
+
 $poller_ranked = $state['selection'] === 'dots';
 // Dot polls send choice id => dots. The others send a list of choice ids.
 $poller_mine = $poller_ranked ? array_map('intval', $state['mine']) : array_fill_keys(array_map('intval', $state['mine']), 1);

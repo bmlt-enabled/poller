@@ -32,6 +32,7 @@ class Admin
         add_action('admin_enqueue_scripts', [$this, 'enqueue']);
         add_action('admin_post_poller_delete_poll', [$this, 'handle_delete']);
         add_action('admin_post_poller_set_status', [$this, 'handle_status']);
+        add_action('admin_post_poller_hide_word', [$this, 'handle_hide_word']);
     }
 
     public function menu(): void
@@ -173,6 +174,31 @@ class Admin
         exit;
     }
 
+    /**
+     * Hide a word cloud entry, or show it again. Posted from the poll's edit
+     * screen or from the results on the public poll page.
+     */
+    public function handle_hide_word(): void
+    {
+        $id = absint($_POST['poll_id'] ?? 0);
+        check_admin_referer('poller_hide_word_' . $id);
+        $this->guard();
+        $poll = $this->repo->get_poll($id);
+        // BallotRules::word() cleans the text into the key it was counted under.
+        // sanitize_text_field() would turn "<3" into "&lt;3" and miss that key.
+        $word = isset($_POST['word']) ? BallotRules::word(wp_unslash($_POST['word'])) : null; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+        $hide = isset($_POST['hide']) && sanitize_key(wp_unslash($_POST['hide'])) === '1';
+        if ($poll && $poll['selection'] === 'words' && $word !== null) {
+            $this->repo->set_word_hidden($id, $word['key'], $hide);
+        }
+        $back = wp_get_referer();
+        if (!$back) {
+            $back = $this->edit_url($id);
+        }
+        wp_safe_redirect(add_query_arg('poller_notice', $hide ? 'hidden' : 'shown', remove_query_arg('poller_notice', $back)));
+        exit;
+    }
+
     public function render_list(): void
     {
         $this->guard();
@@ -232,8 +258,10 @@ class Admin
                                 <td><span class="poller-admin-code-small"><?php echo esc_html($poll['code']); ?></span></td>
                                 <td>
                                     <?php
-                                    echo esc_html($poll['kind'] === 'image' ? __('Pictures', 'poller') : __('Text', 'poller'));
-                                    echo esc_html(', ');
+                                    if ($poll['selection'] !== 'words') {
+                                        echo esc_html($poll['kind'] === 'image' ? __('Pictures', 'poller') : __('Text', 'poller'));
+                                        echo esc_html(', ');
+                                    }
                                     echo esc_html($this->selection_label($poll));
                                     ?>
                                 </td>
@@ -336,7 +364,10 @@ class Admin
                     <tr>
                         <th scope="row"><?php esc_html_e('Choices', 'poller'); ?></th>
                         <td>
-                            <?php if ($locked) : ?>
+                            <?php if ($locked && $poll['selection'] === 'words') : ?>
+                                <p><?php echo esc_html(ucfirst($this->selection_label($poll))); ?></p>
+                                <p class="description"><?php esc_html_e('People have already answered, so the voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller'); ?></p>
+                            <?php elseif ($locked) : ?>
                                 <p><?php echo esc_html($input['kind'] === 'image' ? __('Picture choices', 'poller') : __('Text choices', 'poller')); ?>,
                                     <?php echo esc_html($this->selection_label($poll)); ?></p>
                                 <ul class="poller-admin-locked">
@@ -352,7 +383,7 @@ class Admin
                                 </ul>
                                 <p class="description"><?php esc_html_e('People have already voted, so the choices and voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller'); ?></p>
                             <?php else : ?>
-                                <fieldset>
+                                <fieldset id="poller-kind">
                                     <legend class="screen-reader-text"><?php esc_html_e('Choice type', 'poller'); ?></legend>
                                     <label><input type="radio" name="kind" value="text" <?php checked($input['kind'], 'text'); ?>> <?php esc_html_e('Text', 'poller'); ?></label>
                                     &nbsp;
@@ -365,6 +396,16 @@ class Admin
                                     <label><input type="radio" name="selection" value="multi" <?php checked($input['selection'], 'multi'); ?>> <?php esc_html_e('More than one', 'poller'); ?></label>
                                     &nbsp;
                                     <label><input type="radio" name="selection" value="dots" <?php checked($input['selection'], 'dots'); ?>> <?php esc_html_e('Dot voting', 'poller'); ?></label>
+                                    &nbsp;
+                                    <label><input type="radio" name="selection" value="words" <?php checked($input['selection'], 'words'); ?>> <?php esc_html_e('Word cloud', 'poller'); ?></label>
+                                </fieldset>
+                                <fieldset class="poller-admin-dots" id="poller-words-settings">
+                                    <legend><?php esc_html_e('Word cloud', 'poller'); ?></legend>
+                                    <p class="description"><?php esc_html_e('Each person types a few words or short phrases. The room display shows them as a cloud, larger when more people entered the same word. There are no choices to set up.', 'poller'); ?></p>
+                                    <p>
+                                        <label for="poller-word-limit"><?php esc_html_e('Words for each person', 'poller'); ?></label>
+                                        <input type="number" id="poller-word-limit" name="word_limit" class="small-text" min="1" max="<?php echo esc_attr((string) BallotRules::MAX_WORDS); ?>" value="<?php echo esc_attr((string) (int) $input['word_limit']); ?>">
+                                    </p>
                                 </fieldset>
                                 <fieldset class="poller-admin-dots" id="poller-dots-settings">
                                     <legend><?php esc_html_e('Dot voting', 'poller'); ?></legend>
@@ -384,6 +425,7 @@ class Admin
                                         <label><input type="checkbox" name="spend_all" value="1" <?php checked($input['spend_all']); ?>> <?php esc_html_e('People must use every dot', 'poller'); ?></label>
                                     </p>
                                 </fieldset>
+                                <div id="poller-choice-setup">
                                 <div id="poller-choices" data-kind="<?php echo esc_attr($input['kind']); ?>" data-max="<?php echo esc_attr((string) BallotRules::max_choices($input['selection'])); ?>" data-max-single="<?php echo esc_attr((string) BallotRules::MAX_CHOICES); ?>" data-max-dots="<?php echo esc_attr((string) BallotRules::MAX_DOT_CHOICES); ?>" data-placeholder-text="<?php echo esc_attr__('Choice', 'poller'); ?>" data-placeholder-image="<?php echo esc_attr__('Caption, optional', 'poller'); ?>">
                                     <?php foreach ($choices as $choice) : ?>
                                         <?php $thumb = $this->image_preview((int) $choice['image_id']); ?>
@@ -411,6 +453,7 @@ class Admin
                                         <span class="poller-choice-preview"></span>
                                     </div>
                                 </template>
+                                </div>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -426,6 +469,10 @@ class Admin
                 </table>
                 <?php submit_button($poll ? __('Save poll', 'poller') : __('Create poll', 'poller')); ?>
             </form>
+            <?php if ($poll && $poll['selection'] === 'words') : ?>
+                <h2 id="poller-words"><?php esc_html_e('Words', 'poller'); ?></h2>
+                <?php $this->render_words($poll); ?>
+            <?php endif; ?>
         </div>
         <?php
     }
@@ -450,6 +497,8 @@ class Admin
             'closed' => __('Poll closed.', 'poller'),
             'opened' => __('Poll opened.', 'poller'),
             'kept' => __('People voted while you were editing, so the choices were kept.', 'poller'),
+            'hidden' => __('Word hidden.', 'poller'),
+            'shown' => __('Word shown again.', 'poller'),
         ];
         if (!isset($map[$key])) {
             return;
@@ -503,12 +552,13 @@ class Admin
 
         $kind = (isset($_POST['kind']) && sanitize_key(wp_unslash($_POST['kind'])) === 'image') ? 'image' : 'text';
         $selection = isset($_POST['selection']) ? sanitize_key(wp_unslash($_POST['selection'])) : '';
-        if (!in_array($selection, ['single', 'multi', 'dots'], true)) {
+        if (!in_array($selection, ['single', 'multi', 'dots', 'words'], true)) {
             $selection = 'single';
         }
         $budget = isset($_POST['budget']) ? absint(wp_unslash($_POST['budget'])) : BallotRules::DEFAULT_BUDGET;
         $stacking = !empty($_POST['stacking']);
         $per_choice = isset($_POST['per_choice']) ? absint(wp_unslash($_POST['per_choice'])) : $budget;
+        $word_limit = isset($_POST['word_limit']) ? absint(wp_unslash($_POST['word_limit'])) : BallotRules::DEFAULT_WORDS;
         $status = (isset($_POST['status']) && sanitize_key(wp_unslash($_POST['status'])) === 'closed') ? 'closed' : 'open';
 
         return [
@@ -522,6 +572,7 @@ class Admin
             'stacking' => $stacking,
             'per_choice' => $per_choice,
             'spend_all' => !empty($_POST['spend_all']),
+            'word_limit' => $word_limit,
             'status' => $status,
             'choices' => $choices,
         ];
@@ -545,6 +596,17 @@ class Admin
             return __('The question picture needs to be an image.', 'poller');
         }
         if ($locked) {
+            return null;
+        }
+        if ($input['selection'] === 'words') {
+            $limit = (int) $input['word_limit'];
+            if ($limit < 1 || $limit > BallotRules::MAX_WORDS) {
+                return sprintf(
+                    /* translators: %d is the most words a person can enter. */
+                    __('Let each person enter from 1 to %d words.', 'poller'),
+                    BallotRules::MAX_WORDS
+                );
+            }
             return null;
         }
         if (count($input['choices']) < 2) {
@@ -607,7 +669,7 @@ class Admin
 
     /**
      * Voting rules as they are stored. With stacking off, an item takes 1 dot.
-     * Polls that are not dot voting store zeros.
+     * A word cloud keeps its words per person in budget. Other polls store zeros.
      *
      * @param array<string, mixed> $input
      * @return array<string, mixed>
@@ -621,6 +683,11 @@ class Admin
             'per_choice' => 0,
             'spend_all' => false,
         ];
+        if ($input['selection'] === 'words') {
+            $rules['kind'] = 'text';
+            $rules['budget'] = (int) $input['word_limit'];
+            return $rules;
+        }
         if ($input['selection'] !== 'dots') {
             return $rules;
         }
@@ -654,6 +721,14 @@ class Admin
         if ($poll['selection'] === 'multi') {
             return __('more than one', 'poller');
         }
+        if ($poll['selection'] === 'words') {
+            $limit = (int) $poll['budget'];
+            return sprintf(
+                /* translators: %d is how many words each person can enter. */
+                _n('word cloud, %d word each', 'word cloud, up to %d words each', $limit, 'poller'),
+                $limit
+            );
+        }
         if ($poll['selection'] !== 'dots') {
             return __('one', 'poller');
         }
@@ -683,6 +758,9 @@ class Admin
     private function choice_rows(array $input): array
     {
         $rows = [];
+        if ($input['selection'] === 'words') {
+            return $rows;
+        }
         foreach ($input['choices'] as $choice) {
             $rows[] = [
                 'label' => $choice['label'],
@@ -720,6 +798,7 @@ class Admin
                 'image_id' => $choice['image_id'],
             ];
         }
+        $dots = $poll['selection'] === 'dots';
         return [
             'id' => (int) $poll['id'],
             'title' => (string) $poll['title'],
@@ -727,10 +806,11 @@ class Admin
             'image_id' => (int) $poll['image_id'],
             'kind' => (string) $poll['kind'],
             'selection' => (string) $poll['selection'],
-            'budget' => (int) $poll['budget'] > 0 ? (int) $poll['budget'] : BallotRules::DEFAULT_BUDGET,
+            'budget' => $dots && (int) $poll['budget'] > 0 ? (int) $poll['budget'] : BallotRules::DEFAULT_BUDGET,
             'stacking' => (int) $poll['per_choice'] > 1,
-            'per_choice' => (int) $poll['per_choice'] > 1 ? (int) $poll['per_choice'] : max(2, (int) $poll['budget']),
+            'per_choice' => (int) $poll['per_choice'] > 1 ? (int) $poll['per_choice'] : max(2, $dots ? (int) $poll['budget'] : BallotRules::DEFAULT_BUDGET),
             'spend_all' => !empty($poll['spend_all']),
+            'word_limit' => $poll['selection'] === 'words' && (int) $poll['budget'] > 0 ? (int) $poll['budget'] : BallotRules::DEFAULT_WORDS,
             'status' => (string) $poll['status'],
             'choices' => $choices,
         ];
@@ -752,9 +832,61 @@ class Admin
             'stacking' => false,
             'per_choice' => BallotRules::DEFAULT_BUDGET,
             'spend_all' => false,
+            'word_limit' => BallotRules::DEFAULT_WORDS,
             'status' => 'open',
             'choices' => [],
         ];
+    }
+
+    /**
+     * Every word entered on a word cloud poll, with a Hide or Show button.
+     * Rendered after the poll form, since each button is its own small form.
+     *
+     * @param array<string, mixed> $poll
+     */
+    private function render_words(array $poll): void
+    {
+        $id = (int) $poll['id'];
+        $hidden = $this->repo->hidden_words($id);
+        $words = Tally::words($this->repo->word_rows($id), [], 0);
+        if (!$words && !$hidden) {
+            echo '<p class="description">' . esc_html__('No words yet.', 'poller') . '</p>';
+            return;
+        }
+        $is_hidden = array_fill_keys($hidden, true);
+        $seen = [];
+        echo '<p class="description">' . esc_html__('Hide a word to take it off the room display and the results. People who entered it still see it in their own answers.', 'poller') . '</p>';
+        echo '<table class="widefat striped poller-admin-words"><thead><tr><th>' . esc_html__('Word', 'poller') . '</th><th>' . esc_html__('People', 'poller') . '</th><th><span class="screen-reader-text">' . esc_html__('Action', 'poller') . '</span></th></tr></thead><tbody>';
+        foreach ($words as $word) {
+            $seen[$word['key']] = true;
+            $this->word_row($id, $word['text'], (int) $word['count'], isset($is_hidden[$word['key']]));
+        }
+        foreach ($hidden as $key) {
+            if (!isset($seen[$key])) {
+                $this->word_row($id, $key, 0, true);
+            }
+        }
+        echo '</tbody></table>';
+    }
+
+    private function word_row(int $poll_id, string $text, int $count, bool $hidden): void
+    {
+        ?>
+        <tr<?php echo $hidden ? ' class="poller-word-hidden"' : ''; ?>>
+            <td><?php echo esc_html($text); ?><?php if ($hidden) : ?> <em><?php esc_html_e('(hidden)', 'poller'); ?></em><?php endif; ?></td>
+            <td><?php echo esc_html((string) $count); ?></td>
+            <td>
+                <form class="poller-inline-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('poller_hide_word_' . $poll_id); ?>
+                    <input type="hidden" name="action" value="poller_hide_word">
+                    <input type="hidden" name="poll_id" value="<?php echo esc_attr((string) $poll_id); ?>">
+                    <input type="hidden" name="word" value="<?php echo esc_attr($text); ?>">
+                    <input type="hidden" name="hide" value="<?php echo $hidden ? '0' : '1'; ?>">
+                    <button type="submit" class="button-link"><?php echo $hidden ? esc_html__('Show again', 'poller') : esc_html__('Hide', 'poller'); ?></button>
+                </form>
+            </td>
+        </tr>
+        <?php
     }
 
     private function image_preview(int $id): string

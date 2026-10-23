@@ -12,6 +12,9 @@
     --chalk-dim: #c9d5cc;
     --board-track: #31443a;
     --board-rule: #3d5248;
+    --sea: #1f6f8b;
+    --board-stamp: #ff8f80;
+    --board-sea: #8fd3e8;
 }
 
 .poller-body {
@@ -415,6 +418,118 @@
     cursor: not-allowed;
 }
 
+.poller-words {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.poller-word-input {
+    display: block;
+    width: 100%;
+    margin: 0;
+    padding: 0.7rem 0.8rem;
+    border: 2px solid var(--ink);
+    border-radius: 0;
+    background: var(--slip);
+    color: var(--ink);
+    font: inherit;
+    font-size: 1.2rem;
+}
+
+.poller-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 0.2em 0.6em;
+    margin: 0 0 1.25rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
+.poller-cloud:empty {
+    display: none;
+}
+
+.poller-cloud--placed {
+    display: block;
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    max-height: 70vh;
+    overflow: hidden;
+}
+
+.poller-cloud--placed .poller-cloud-word {
+    position: absolute;
+    line-height: 1;
+    white-space: nowrap;
+    transition: left 0.6s ease, top 0.6s ease, font-size 0.6s ease;
+}
+
+.poller-cloud-word.is-new {
+    animation: poller-word-in 0.6s ease-out both;
+}
+
+@keyframes poller-word-in {
+    from {
+        opacity: 0;
+        transform: scale(0.4);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.poller-cloud-probe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    visibility: hidden;
+    font-size: 100px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.poller-cloud-word--a {
+    color: var(--ink);
+}
+
+.poller-cloud-word--b {
+    color: var(--stamp-deep);
+}
+
+.poller-cloud-word--c {
+    color: var(--ink-soft);
+}
+
+.poller-cloud-word--d {
+    color: var(--sea);
+}
+
+.poller-cloud-empty {
+    margin: 0 0 1rem;
+    color: var(--ink-soft);
+}
+
+.poller-hide-word {
+    display: inline;
+    margin-left: 0.5rem;
+}
+
+.poller-hide-word button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--ink-soft);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.9rem;
+    text-decoration: underline;
+}
+
 .poller-results--folded .poller-result--extra {
     display: none;
 }
@@ -611,6 +726,49 @@
     background: var(--board-track);
 }
 
+.poller-body--board .poller-results--cloud {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.poller-body--board .poller-cloud {
+    font-size: clamp(1.25rem, 2.6vw, 2.25rem);
+}
+
+.poller-body--board .poller-cloud--placed {
+    flex: 1;
+    aspect-ratio: auto;
+    min-height: clamp(16rem, 55vh, 48rem);
+    max-height: none;
+}
+
+.poller-body--board .poller-results--cloud .poller-result-list,
+.poller-body--board .poller-results--cloud .poller-more {
+    display: none;
+}
+
+.poller-body--board .poller-cloud-word--a {
+    color: var(--chalk);
+}
+
+.poller-body--board .poller-cloud-word--b {
+    color: var(--board-stamp);
+}
+
+.poller-body--board .poller-cloud-word--c {
+    color: var(--chalk-dim);
+}
+
+.poller-body--board .poller-cloud-word--d {
+    color: var(--board-sea);
+}
+
+.poller-body--board .poller-cloud-empty {
+    color: var(--chalk-dim);
+    font-size: clamp(1.25rem, 2.4vw, 1.85rem);
+}
+
 .poller-body--board .poller-closed {
     margin: 0;
     color: var(--chalk);
@@ -635,8 +793,19 @@
     }
 }
 
+@media (max-width: 480px) {
+    .poller-cloud--placed {
+        aspect-ratio: 1 / 1;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
-    .poller-bar {
+    .poller-bar,
+    .poller-cloud--placed .poller-cloud-word {
         transition: none;
+    }
+
+    .poller-cloud-word.is-new {
+        animation: none;
     }
 }

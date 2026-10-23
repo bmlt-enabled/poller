@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
 
 class Repository
 {
-    public const DB_VERSION = '2';
+    public const DB_VERSION = '3';
     public const VERSION_OPTION = 'poller_db_version';
 
     public function install(): void
@@ -33,6 +33,8 @@ class Repository
         $choices = $this->table('choices');
         $ballots = $this->table('ballots');
         $votes = $this->table('votes');
+        $words = $this->table('words');
+        $hidden = $this->table('hidden_words');
 
         dbDelta("CREATE TABLE {$polls} (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -83,6 +85,25 @@ class Repository
             KEY choice_id (choice_id)
         ) {$charset};");
 
+        // Word cloud entries. Voter text lives here, apart from the choices the admin owns.
+        // Words are matched in PHP, not by the column collation, which may ignore case and accents.
+        dbDelta("CREATE TABLE {$words} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            ballot_id bigint(20) unsigned NOT NULL,
+            word varchar(64) NOT NULL DEFAULT '',
+            normalized varchar(64) NOT NULL DEFAULT '',
+            PRIMARY KEY  (id),
+            KEY ballot_id (ballot_id)
+        ) {$charset};");
+
+        dbDelta("CREATE TABLE {$hidden} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            poll_id bigint(20) unsigned NOT NULL,
+            normalized varchar(64) NOT NULL DEFAULT '',
+            PRIMARY KEY  (id),
+            KEY poll_id (poll_id)
+        ) {$charset};");
+
         update_option(self::VERSION_OPTION, self::DB_VERSION);
     }
 
@@ -90,7 +111,7 @@ class Repository
     {
         global $wpdb;
 
-        foreach (['votes', 'ballots', 'choices', 'polls'] as $name) {
+        foreach (['words', 'hidden_words', 'votes', 'ballots', 'choices', 'polls'] as $name) {
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Uninstall removes this plugin's tables.
             $wpdb->query($wpdb->prepare('DROP TABLE IF EXISTS %i', $this->table($name)));
         }
@@ -179,6 +200,13 @@ class Repository
             $this->table('ballots'),
             $id
         ));
+        $wpdb->query($wpdb->prepare(
+            'DELETE w FROM %i w INNER JOIN %i b ON b.id = w.ballot_id WHERE b.poll_id = %d',
+            $this->table('words'),
+            $this->table('ballots'),
+            $id
+        ));
+        $wpdb->delete($this->table('hidden_words'), ['poll_id' => $id], ['%d']);
         $wpdb->delete($this->table('ballots'), ['poll_id' => $id], ['%d']);
         $wpdb->delete($this->table('choices'), ['poll_id' => $id], ['%d']);
         $wpdb->delete($this->table('polls'), ['id' => $id], ['%d']);
@@ -438,28 +466,121 @@ class Repository
     }
 
     /**
-     * Replace this browser's ballot. Throws RuntimeException('closed')
+     * This ballot's word cloud entries, as they were shown back.
+     *
+     * @return array<int, string>
+     */
+    public function ballot_words(int $ballot_id): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->get_col($wpdb->prepare(
+            'SELECT word FROM %i WHERE ballot_id = %d ORDER BY id ASC',
+            $this->table('words'),
+            $ballot_id
+        ));
+        return is_array($rows) ? array_map('strval', $rows) : [];
+    }
+
+    /**
+     * Word cloud entries for Tally::words(), one row per entry. Never which
+     * ballot. Not grouped in SQL: the column collation could merge "Hope" with
+     * "hope", and Tally needs each spelling to pick the one to show.
+     *
+     * @return array<int, array{key: string, text: string, count: int}>
+     */
+    public function word_rows(int $poll_id): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            'SELECT w.normalized, w.word
+            FROM %i w
+            INNER JOIN %i b ON b.id = w.ballot_id
+            WHERE b.poll_id = %d',
+            $this->table('words'),
+            $this->table('ballots'),
+            $poll_id
+        ), ARRAY_A);
+
+        if (!is_array($rows)) {
+            return [];
+        }
+        return array_map(static function ($row) {
+            return [
+                'key' => (string) $row['normalized'],
+                'text' => (string) $row['word'],
+                'count' => 1,
+            ];
+        }, $rows);
+    }
+
+    /**
+     * @return array<int, string> keys an admin hid from this poll's cloud
+     */
+    public function hidden_words(int $poll_id): array
+    {
+        global $wpdb;
+
+        $rows = $wpdb->get_col($wpdb->prepare(
+            'SELECT normalized FROM %i WHERE poll_id = %d ORDER BY normalized ASC',
+            $this->table('hidden_words'),
+            $poll_id
+        ));
+        return is_array($rows) ? array_map('strval', $rows) : [];
+    }
+
+    /**
+     * Hide a word from the cloud, or show it again. Bumps the revision so
+     * open pages pick it up on their next refresh.
+     */
+    public function set_word_hidden(int $poll_id, string $key, bool $hidden): void
+    {
+        global $wpdb;
+
+        $table = $this->table('hidden_words');
+        $rows = $wpdb->get_results($wpdb->prepare(
+            'SELECT id, normalized FROM %i WHERE poll_id = %d',
+            $table,
+            $poll_id
+        ), ARRAY_A);
+        $found = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if ((string) $row['normalized'] === $key) {
+                $found[] = (int) $row['id'];
+            }
+        }
+
+        if ($hidden && !$found) {
+            $wpdb->insert($table, ['poll_id' => $poll_id, 'normalized' => $key], ['%d', '%s']);
+        } elseif (!$hidden) {
+            foreach ($found as $id) {
+                $wpdb->delete($table, ['id' => $id], ['%d']);
+            }
+        }
+        $this->touch($poll_id);
+    }
+
+    /**
+     * Replace this browser's word cloud entries. Throws RuntimeException('closed')
      * or RuntimeException('invalid') after rolling back.
      *
-     * The weights are checked again against the locked poll row, so a rule
-     * change saved between the first check and this write cannot slip through.
+     * The entries are checked again against the locked poll row, like cast().
      *
-     * @param array<int, int> $weights choice id => weight
+     * @param array<int, array{text: string, key: string}> $words
      */
-    public function cast(int $poll_id, string $voter_token, array $weights): void
+    public function cast_words(int $poll_id, string $voter_token, array $words): void
     {
         global $wpdb;
 
         $polls = $this->table('polls');
-        $choices = $this->table('choices');
-        $ballots = $this->table('ballots');
-        $votes = $this->table('votes');
+        $table = $this->table('words');
         $now = $this->now();
 
         $wpdb->query('START TRANSACTION');
 
         $poll = $wpdb->get_row($wpdb->prepare(
-            'SELECT id, status, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
+            'SELECT id, status, selection, budget FROM %i WHERE id = %d FOR UPDATE',
             $polls,
             $poll_id
         ));
@@ -468,31 +589,48 @@ class Repository
             throw new \RuntimeException('closed');
         }
 
-        $choice_ids = array_values(array_map('intval', array_keys($weights)));
-        $submitted = $poll->selection === 'dots' ? $weights : $choice_ids;
-        $checked = BallotRules::weigh((array) $poll, $submitted, $choice_ids);
-        if (count($choice_ids) === 0 || $checked['error'] !== null || $checked['weights'] != $weights) {
+        $checked = BallotRules::words(array_column($words, 'text'), (int) $poll->budget);
+        if ($poll->selection !== 'words' || $checked['error'] !== null || $checked['words'] !== $words) {
             $wpdb->query('ROLLBACK');
             throw new \RuntimeException('invalid');
         }
 
-        $placeholders = implode(',', array_fill(0, count($choice_ids), '%d'));
-        // The IN list is only repeated %d placeholders, one per choice id.
-        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $found = $wpdb->get_col($wpdb->prepare(
-            "SELECT id FROM %i WHERE poll_id = %d AND id IN ({$placeholders})",
-            ...array_merge([$choices, $poll_id], $choice_ids)
+        $ballot_id = $this->upsert_ballot($poll_id, $voter_token, $now);
+        $wpdb->delete($table, ['ballot_id' => $ballot_id], ['%d']);
+        foreach ($words as $word) {
+            $ok = $wpdb->insert(
+                $table,
+                [
+                    'ballot_id' => $ballot_id,
+                    'word' => $word['text'],
+                    'normalized' => $word['key'],
+                ],
+                ['%d', '%s', '%s']
+            );
+            if (!$ok) {
+                $wpdb->query('ROLLBACK');
+                throw new \RuntimeException('invalid');
+            }
+        }
+
+        $wpdb->query($wpdb->prepare(
+            'UPDATE %i SET revision = revision + 1, updated_at = %s WHERE id = %d',
+            $polls,
+            $now,
+            $poll_id
         ));
-        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
-        $found = is_array($found) ? array_map('intval', $found) : [];
-        sort($found);
-        $expected = array_map('intval', $choice_ids);
-        sort($expected);
-        if ($found !== $expected) {
-            $wpdb->query('ROLLBACK');
-            throw new \RuntimeException('invalid');
-        }
+        $wpdb->query('COMMIT');
+    }
 
+    /**
+     * Find or add this browser's ballot inside a cast transaction. Rolls back
+     * and throws RuntimeException('invalid') when there is no row to use.
+     */
+    private function upsert_ballot(int $poll_id, string $voter_token, string $now): int
+    {
+        global $wpdb;
+
+        $ballots = $this->table('ballots');
         $ballot_id = (int) $wpdb->get_var($wpdb->prepare(
             'SELECT id FROM %i WHERE poll_id = %d AND voter_token = %s LIMIT 1 FOR UPDATE',
             $ballots,
@@ -534,6 +672,65 @@ class Repository
                 ['%d']
             );
         }
+        return $ballot_id;
+    }
+
+    /**
+     * Replace this browser's ballot. Throws RuntimeException('closed')
+     * or RuntimeException('invalid') after rolling back.
+     *
+     * The weights are checked again against the locked poll row, so a rule
+     * change saved between the first check and this write cannot slip through.
+     *
+     * @param array<int, int> $weights choice id => weight
+     */
+    public function cast(int $poll_id, string $voter_token, array $weights): void
+    {
+        global $wpdb;
+
+        $polls = $this->table('polls');
+        $choices = $this->table('choices');
+        $votes = $this->table('votes');
+        $now = $this->now();
+
+        $wpdb->query('START TRANSACTION');
+
+        $poll = $wpdb->get_row($wpdb->prepare(
+            'SELECT id, status, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
+            $polls,
+            $poll_id
+        ));
+        if (!$poll || $poll->status !== 'open') {
+            $wpdb->query('ROLLBACK');
+            throw new \RuntimeException('closed');
+        }
+
+        $choice_ids = array_values(array_map('intval', array_keys($weights)));
+        $submitted = $poll->selection === 'dots' ? $weights : $choice_ids;
+        $checked = BallotRules::weigh((array) $poll, $submitted, $choice_ids);
+        if (count($choice_ids) === 0 || $checked['error'] !== null || $checked['weights'] != $weights) {
+            $wpdb->query('ROLLBACK');
+            throw new \RuntimeException('invalid');
+        }
+
+        $placeholders = implode(',', array_fill(0, count($choice_ids), '%d'));
+        // The IN list is only repeated %d placeholders, one per choice id.
+        // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $found = $wpdb->get_col($wpdb->prepare(
+            "SELECT id FROM %i WHERE poll_id = %d AND id IN ({$placeholders})",
+            ...array_merge([$choices, $poll_id], $choice_ids)
+        ));
+        // phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $found = is_array($found) ? array_map('intval', $found) : [];
+        sort($found);
+        $expected = array_map('intval', $choice_ids);
+        sort($expected);
+        if ($found !== $expected) {
+            $wpdb->query('ROLLBACK');
+            throw new \RuntimeException('invalid');
+        }
+
+        $ballot_id = $this->upsert_ballot($poll_id, $voter_token, $now);
 
         $wpdb->delete($votes, ['ballot_id' => $ballot_id], ['%d']);
         foreach ($expected as $choice_id) {
