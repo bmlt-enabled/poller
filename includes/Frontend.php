@@ -10,383 +10,376 @@
 
 namespace BmltEnabled\Poller;
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-class Frontend
-{
-    private Repository $repo;
-    private Presenter $presenter;
-    private VoteService $votes;
+class Frontend {
 
-    public function __construct(Repository $repo, Presenter $presenter, VoteService $votes)
-    {
-        $this->repo = $repo;
-        $this->presenter = $presenter;
-        $this->votes = $votes;
-    }
+	private Repository $repo;
+	private Presenter $presenter;
+	private VoteService $votes;
 
-    public function hooks(): void
-    {
-        add_filter('redirect_canonical', [$this, 'canonical']);
-        add_filter('pre_handle_404', [$this, 'pre_handle_404'], 10, 2);
-        add_action('template_redirect', [$this, 'route']);
-        add_action('admin_post_nopriv_poller_vote', [$this, 'post_vote']);
-        add_action('admin_post_poller_vote', [$this, 'post_vote']);
-    }
+	public function __construct( Repository $repo, Presenter $presenter, VoteService $votes ) {
+		$this->repo = $repo;
+		$this->presenter = $presenter;
+		$this->votes = $votes;
+	}
 
-    /**
-     * @param mixed $redirect
-     * @return mixed
-     */
-    public function canonical($redirect)
-    {
-        if (get_query_var('poller_view')) {
-            return false;
-        }
-        return $redirect;
-    }
+	public function hooks(): void {
+		add_filter( 'redirect_canonical', [ $this, 'canonical' ] );
+		add_filter( 'pre_handle_404', [ $this, 'pre_handle_404' ], 10, 2 );
+		add_action( 'template_redirect', [ $this, 'route' ] );
+		add_action( 'admin_post_nopriv_poller_vote', [ $this, 'post_vote' ] );
+		add_action( 'admin_post_poller_vote', [ $this, 'post_vote' ] );
+	}
 
-    /**
-     * @param mixed $handled
-     * @param \WP_Query $query
-     * @return mixed
-     */
-    public function pre_handle_404($handled, $query)
-    {
-        unset($query);
-        if (get_query_var('poller_view')) {
-            return true;
-        }
-        return $handled;
-    }
+	/**
+	 * @param mixed $redirect
+	 * @return mixed
+	 */
+	public function canonical( $redirect ) {
+		if ( get_query_var( 'poller_view' ) ) {
+			return false;
+		}
+		return $redirect;
+	}
 
-    public function route(): void
-    {
-        $view = (string) get_query_var('poller_view');
-        if ($view === 'join') {
-            $this->render_join();
-            exit;
-        }
-        if ($view === 'poll' || $view === 'board') {
-            $this->render_poll($view);
-            exit;
-        }
-    }
+	/**
+	 * @param mixed $handled
+	 * @param \WP_Query $query
+	 * @return mixed
+	 */
+	public function pre_handle_404( $handled, $query ) {
+		unset( $query );
+		if ( get_query_var( 'poller_view' ) ) {
+			return true;
+		}
+		return $handled;
+	}
 
-    public function post_vote(): void
-    {
-        $code = isset($_POST['code']) ? Codes::normalize(sanitize_text_field(wp_unslash($_POST['code']))) : '';
-        $target = Codes::is_valid($code) ? Plugin::poll_url($code) : Plugin::join_url();
-        $nonce = isset($_POST['nonce']) ? sanitize_text_field(wp_unslash($_POST['nonce'])) : '';
+	public function route(): void {
+		$view = (string) get_query_var( 'poller_view' );
+		if ( 'join' === $view ) {
+			$this->render_join();
+			exit;
+		}
+		if ( 'poll' === $view || 'board' === $view ) {
+			$this->render_poll( $view );
+			exit;
+		}
+	}
 
-        if (!wp_verify_nonce($nonce, 'poller_vote_' . $code)) {
-            $this->redirect_vote_error($target, 'poller_nonce');
-        }
+	public function post_vote(): void {
+		$code = isset( $_POST['code'] ) ? Codes::normalize( sanitize_text_field( wp_unslash( $_POST['code'] ) ) ) : '';
+		$target = Codes::is_valid( $code ) ? Plugin::poll_url( $code ) : Plugin::join_url();
+		$nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
 
-        // Values stay as text so BallotRules rejects a negative or fractional
-        // count instead of absint() quietly turning it into a valid one.
-        $choices = [];
-        if (isset($_POST['words']) && is_array($_POST['words'])) {
-            // Word cloud entries. BallotRules::words() drops control characters,
-            // and every place a word is shown escapes it. sanitize_text_field()
-            // would store "<3" as "&lt;3".
-            $choices = array_values(array_filter(wp_unslash($_POST['words']), 'is_string')); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-        } elseif (isset($_POST['choices']) && is_array($_POST['choices'])) {
-            $choices = map_deep(wp_unslash($_POST['choices']), 'sanitize_text_field');
-        } elseif (isset($_POST['choices'])) {
-            $choices = [sanitize_text_field(wp_unslash($_POST['choices']))];
-        }
+		if ( ! wp_verify_nonce( $nonce, 'poller_vote_' . $code ) ) {
+			$this->redirect_vote_error( $target, 'poller_nonce' );
+		}
 
-        $result = $this->votes->vote($code, $choices);
-        if (is_wp_error($result)) {
-            $this->redirect_vote_error($target, $result->get_error_code());
-        }
+		// Values stay as text so BallotRules rejects a negative or fractional
+		// count instead of absint() quietly turning it into a valid one.
+		$choices = [];
+		if ( isset( $_POST['words'] ) && is_array( $_POST['words'] ) ) {
+			// Word cloud entries. BallotRules::words() drops control characters,
+			// and every place a word is shown escapes it. sanitize_text_field()
+			// would store "<3" as "&lt;3".
+			$choices = array_values( array_filter( wp_unslash( $_POST['words'] ), 'is_string' ) ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		} elseif ( isset( $_POST['choices'] ) && is_array( $_POST['choices'] ) ) {
+			$choices = map_deep( wp_unslash( $_POST['choices'] ), 'sanitize_text_field' );
+		} elseif ( isset( $_POST['choices'] ) ) {
+			$choices = [ sanitize_text_field( wp_unslash( $_POST['choices'] ) ) ];
+		}
 
-        wp_safe_redirect($target);
-        exit;
-    }
+		$result = $this->votes->vote( $code, $choices );
+		if ( is_wp_error( $result ) ) {
+			$this->redirect_vote_error( $target, $result->get_error_code() );
+		}
 
-    private function render_join(): void
-    {
-        $error = '';
-        $code_value = '';
+		wp_safe_redirect( $target );
+		exit;
+	}
 
-        // Public join lookup. The code only selects a poll to redirect to.
-        if (isset($_GET['code'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            $code_value = sanitize_text_field(wp_unslash($_GET['code'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            $raw = Codes::normalize($code_value);
-            if (Codes::has_ambiguous($raw)) {
-                $error = __('That code has a character that is not used. Codes leave out 0, 1, I, L, and O.', 'poller');
-            } elseif (!Codes::is_valid($raw)) {
-                $error = __('Enter the 6-character code from the room.', 'poller');
-            } elseif ($this->repo->get_poll_by_code($raw) === null) {
-                $error = __('That code does not match a poll.', 'poller');
-            } else {
-                wp_safe_redirect(Plugin::poll_url($raw));
-                exit;
-            }
-        }
+	private function render_join(): void {
+		$error = '';
+		$code_value = '';
 
-        $body = $this->capture('join', [
-            'error' => $error,
-            'code_value' => $code_value,
-            'join_url' => Plugin::join_url(),
-        ]);
-        $this->send(__('Enter the code', 'poller'), 'poller-body poller-body--join', $body, 200, false);
-    }
+		// Public join lookup. The code only selects a poll to redirect to.
+		if ( isset( $_GET['code'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$code_value = sanitize_text_field( wp_unslash( $_GET['code'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$raw = Codes::normalize( $code_value );
+			if ( Codes::has_ambiguous( $raw ) ) {
+				$error = __( 'That code has a character that is not used. Codes leave out 0, 1, I, L, and O.', 'poller' );
+			} elseif ( ! Codes::is_valid( $raw ) ) {
+				$error = __( 'Enter the 6-character code from the room.', 'poller' );
+			} elseif ( $this->repo->get_poll_by_code( $raw ) === null ) {
+				$error = __( 'That code does not match a poll.', 'poller' );
+			} else {
+				wp_safe_redirect( Plugin::poll_url( $raw ) );
+				exit;
+			}
+		}
 
-    private function render_poll(string $view): void
-    {
-        $code = Codes::normalize((string) get_query_var('poller_code'));
-        $poll = Codes::is_valid($code) ? $this->repo->get_poll_by_code($code) : null;
-        if (!$poll) {
-            $body = $this->capture('missing', [
-                'join_url' => Plugin::join_url(),
-            ]);
-            $this->send(__('Poll not found', 'poller'), 'poller-body', $body, 404, false);
-            return;
-        }
+		$body = $this->capture(
+			'join',
+			[
+				'error' => $error,
+				'code_value' => $code_value,
+				'join_url' => Plugin::join_url(),
+			]
+		);
+		$this->send( __( 'Enter the code', 'poller' ), 'poller-body poller-body--join', $body, 200, false );
+	}
 
-        Voter::ensure();
-        $hash = Voter::hash(Voter::token());
-        $state = $this->presenter->payload($poll, $hash);
-        $title = (string) $state['question'];
-        $can_manage = current_user_can('manage_options');
+	private function render_poll( string $view ): void {
+		$code = Codes::normalize( (string) get_query_var( 'poller_code' ) );
+		$poll = Codes::is_valid( $code ) ? $this->repo->get_poll_by_code( $code ) : null;
+		if ( ! $poll ) {
+			$body = $this->capture(
+				'missing',
+				[
+					'join_url' => Plugin::join_url(),
+				]
+			);
+			$this->send( __( 'Poll not found', 'poller' ), 'poller-body', $body, 404, false );
+			return;
+		}
 
-        // Hide buttons on the poll page's results, for admins. Never on the
-        // room display, which is up on a screen.
-        $moderate = null;
-        if ($can_manage && $view === 'poll' && $state['selection'] === 'words') {
-            $moderate = [
-                'url' => admin_url('admin-post.php'),
-                'poll' => (int) $poll['id'],
-                'nonce' => wp_create_nonce('poller_hide_word_' . (int) $poll['id']),
-                'hide' => __('Hide', 'poller'),
-                /* translators: %s is a word in the word cloud. */
-                'hideLabel' => __('Hide "%s" from the results', 'poller'),
-            ];
-        }
+		Voter::ensure();
+		$hash = Voter::hash( Voter::token() );
+		$state = $this->presenter->payload( $poll, $hash );
+		$title = (string) $state['question'];
+		$can_manage = current_user_can( 'manage_options' );
 
-        $client = $this->client_state($state);
-        $client['moderate'] = $moderate;
+		// Hide buttons on the poll page's results, for admins. Never on the
+		// room display, which is up on a screen.
+		$moderate = null;
+		if ( $can_manage && 'poll' === $view && 'words' === $state['selection'] ) {
+			$moderate = [
+				'url' => admin_url( 'admin-post.php' ),
+				'poll' => (int) $poll['id'],
+				'nonce' => wp_create_nonce( 'poller_hide_word_' . (int) $poll['id'] ),
+				'hide' => __( 'Hide', 'poller' ),
+				/* translators: %s is a word in the word cloud. */
+				'hideLabel' => __( 'Hide "%s" from the results', 'poller' ),
+			];
+		}
 
-        $body = $this->capture($view === 'board' ? 'board' : 'poll', [
-            'state' => $state,
-            'client' => $client,
-            'moderate' => $moderate,
-            'error' => $this->vote_error($state),
-            'join_url' => Plugin::join_url(),
-            'join_human' => $this->human_url(Plugin::join_url()),
-            'post_url' => admin_url('admin-post.php'),
-            'nonce' => wp_create_nonce('poller_vote_' . $state['code']),
-            'can_manage' => $can_manage,
-            'total_label' => self::total_label((int) $state['ballots'], $state),
-            'summary' => $this->summary($state),
-            'your_vote' => __('Your vote', 'poller'),
-        ]);
+		$client = $this->client_state( $state );
+		$client['moderate'] = $moderate;
 
-        $class = $view === 'board' ? 'poller-body poller-body--board' : 'poller-body';
-        $this->send($title, $class, $body, 200, $view === 'board');
-    }
+		$body = $this->capture(
+			'board' === $view ? 'board' : 'poll',
+			[
+				'state' => $state,
+				'client' => $client,
+				'moderate' => $moderate,
+				'error' => $this->vote_error( $state ),
+				'join_url' => Plugin::join_url(),
+				'join_human' => $this->human_url( Plugin::join_url() ),
+				'post_url' => admin_url( 'admin-post.php' ),
+				'nonce' => wp_create_nonce( 'poller_vote_' . $state['code'] ),
+				'can_manage' => $can_manage,
+				'total_label' => self::total_label( (int) $state['ballots'], $state ),
+				'summary' => $this->summary( $state ),
+				'your_vote' => __( 'Your vote', 'poller' ),
+			]
+		);
 
-    /**
-     * @param array<string, mixed> $state
-     * @return array<string, mixed>
-     */
-    private function client_state(array $state): array
-    {
-        $code = rawurlencode((string) $state['code']);
-        $state['nonce'] = wp_create_nonce('poller_vote_' . $state['code']);
-        $state['rest'] = rest_url('poller/v1/polls/' . $code);
-        $state['restVotes'] = rest_url('poller/v1/polls/' . $code . '/votes');
-        $state['i18n'] = [
-            'oneVote' => __('1 vote', 'poller'),
-            /* translators: %s is the number of ballots. */
-            'manyVotes' => __('%s votes', 'poller'),
-            'noVotes' => __('No votes yet', 'poller'),
-            'yourVote' => __('Your vote', 'poller'),
-            'vote' => __('Vote', 'poller'),
-            'updateVote' => __('Update vote', 'poller'),
-            'saving' => __('Saving vote', 'poller'),
-            'paused' => __('Live results paused. Still showing the last update.', 'poller'),
-            'chooseOne' => __('Choose one option.', 'poller'),
-            'chooseSome' => __('Choose at least one option.', 'poller'),
-            'voteFailed' => __('The vote did not save. Try again.', 'poller'),
-            'qr' => __('QR code that opens this poll', 'poller'),
-        ];
-        if ($state['selection'] === 'dots') {
-            $budget = (int) $state['budget'];
-            $state['i18n'] += [
-                /* translators: 1: dots not placed yet, 2: dots each voter has. */
-                'dotsLeft' => _n('%1$s of %2$s dot left', '%1$s of %2$s dots left', $budget, 'poller'),
-                'toPlaceOne' => __('1 dot left to place', 'poller'),
-                /* translators: %s is the number of dots not placed yet. */
-                'toPlaceMany' => __('%s dots left to place', 'poller'),
-                'placeDot' => __('Place a dot to vote', 'poller'),
-                /* translators: %s is how many dots this browser put on an item. */
-                'yourDots' => __('Your dots: %s', 'poller'),
-                'oneDot' => __('1 dot', 'poller'),
-                /* translators: %s is the number of dots. */
-                'manyDots' => __('%s dots', 'poller'),
-                /* translators: %s is the number of items. */
-                'showAll' => __('Show all %s', 'poller'),
-                'showTop' => __('Show the top 10', 'poller'),
-            ];
-        }
-        if ($state['selection'] === 'words') {
-            $state['i18n'] += [
-                'enterWord' => __('Enter at least one word.', 'poller'),
-                'yourWord' => __('Your word', 'poller'),
-                'noWords' => __('Words will show up here as people answer.', 'poller'),
-                /* translators: %s is the number of words. */
-                'showAll' => __('Show all %s', 'poller'),
-                'showTop' => __('Show the top 10', 'poller'),
-            ];
-        }
-        return $state;
-    }
+		$class = 'board' === $view ? 'poller-body poller-body--board' : 'poller-body';
+		$this->send( $title, $class, $body, 200, 'board' === $view );
+	}
 
-    /**
-     * @param array<string, mixed> $state
-     */
-    private function vote_error(array $state): string
-    {
-        // Status key added by redirect_vote_error() and matched against a fixed list.
-        if (!isset($_GET['vote'])) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-            return '';
-        }
-        $code = sanitize_key(wp_unslash($_GET['vote'])); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-        return (string) VoteService::error_message($code, $state);
-    }
+	/**
+	 * @param array<string, mixed> $state
+	 * @return array<string, mixed>
+	 */
+	private function client_state( array $state ): array {
+		$code = rawurlencode( (string) $state['code'] );
+		$state['nonce'] = wp_create_nonce( 'poller_vote_' . $state['code'] );
+		$state['rest'] = rest_url( 'poller/v1/polls/' . $code );
+		$state['restVotes'] = rest_url( 'poller/v1/polls/' . $code . '/votes' );
+		$state['i18n'] = [
+			'oneVote' => __( '1 vote', 'poller' ),
+			/* translators: %s is the number of ballots. */
+			'manyVotes' => __( '%s votes', 'poller' ),
+			'noVotes' => __( 'No votes yet', 'poller' ),
+			'yourVote' => __( 'Your vote', 'poller' ),
+			'vote' => __( 'Vote', 'poller' ),
+			'updateVote' => __( 'Update vote', 'poller' ),
+			'saving' => __( 'Saving vote', 'poller' ),
+			'paused' => __( 'Live results paused. Still showing the last update.', 'poller' ),
+			'chooseOne' => __( 'Choose one option.', 'poller' ),
+			'chooseSome' => __( 'Choose at least one option.', 'poller' ),
+			'voteFailed' => __( 'The vote did not save. Try again.', 'poller' ),
+			'qr' => __( 'QR code that opens this poll', 'poller' ),
+		];
+		if ( 'dots' === $state['selection'] ) {
+			$budget = (int) $state['budget'];
+			$state['i18n'] += [
+				/* translators: 1: dots not placed yet, 2: dots each voter has. */
+				'dotsLeft' => _n( '%1$s of %2$s dot left', '%1$s of %2$s dots left', $budget, 'poller' ),
+				'toPlaceOne' => __( '1 dot left to place', 'poller' ),
+				/* translators: %s is the number of dots not placed yet. */
+				'toPlaceMany' => __( '%s dots left to place', 'poller' ),
+				'placeDot' => __( 'Place a dot to vote', 'poller' ),
+				/* translators: %s is how many dots this browser put on an item. */
+				'yourDots' => __( 'Your dots: %s', 'poller' ),
+				'oneDot' => __( '1 dot', 'poller' ),
+				/* translators: %s is the number of dots. */
+				'manyDots' => __( '%s dots', 'poller' ),
+				/* translators: %s is the number of items. */
+				'showAll' => __( 'Show all %s', 'poller' ),
+				'showTop' => __( 'Show the top 10', 'poller' ),
+			];
+		}
+		if ( 'words' === $state['selection'] ) {
+			$state['i18n'] += [
+				'enterWord' => __( 'Enter at least one word.', 'poller' ),
+				'yourWord' => __( 'Your word', 'poller' ),
+				'noWords' => __( 'Words will show up here as people answer.', 'poller' ),
+				/* translators: %s is the number of words. */
+				'showAll' => __( 'Show all %s', 'poller' ),
+				'showTop' => __( 'Show the top 10', 'poller' ),
+			];
+		}
+		return $state;
+	}
 
-    /**
-     * @param array<string, mixed> $state
-     */
-    private function summary(array $state): string
-    {
-        $parts = [self::total_label((int) $state['ballots'], $state)];
-        if ($state['selection'] === 'words') {
-            foreach ($state['words'] as $word) {
-                $parts[] = $word['text'] . ' ' . (int) $word['count'];
-            }
-            return implode('. ', $parts) . '.';
-        }
-        $dots = $state['selection'] === 'dots';
-        foreach ($state['choices'] as $choice) {
-            $votes = (int) $choice['votes'];
-            if (!$dots) {
-                $parts[] = $choice['label'] . ' ' . $votes;
-                continue;
-            }
-            $parts[] = $choice['label'] . ' ' . ($votes === 1 ? __('1 dot', 'poller') : sprintf(
-                /* translators: %s is the number of dots. */
-                __('%s dots', 'poller'),
-                number_format_i18n($votes)
-            ));
-        }
-        return implode('. ', $parts) . '.';
-    }
+	/**
+	 * @param array<string, mixed> $state
+	 */
+	private function vote_error( array $state ): string {
+		// Status key added by redirect_vote_error() and matched against a fixed list.
+		if ( ! isset( $_GET['vote'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return '';
+		}
+		$code = sanitize_key( wp_unslash( $_GET['vote'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return (string) VoteService::error_message( $code, $state );
+	}
 
-    /**
-     * @param array<string, mixed> $state
-     */
-    public static function total_label(int $ballots, array $state = []): string
-    {
-        if ($ballots === 0) {
-            return __('No votes yet', 'poller');
-        }
-        if ($ballots === 1) {
-            $label = __('1 vote', 'poller');
-        } else {
-            $label = sprintf(
-                /* translators: %s is the number of ballots. */
-                __('%s votes', 'poller'),
-                number_format_i18n($ballots)
-            );
-        }
-        if (($state['selection'] ?? '') !== 'dots') {
-            return $label;
-        }
-        $dots = (int) $state['dots'];
-        $dots_label = $dots === 1 ? __('1 dot', 'poller') : sprintf(
-            /* translators: %s is the number of dots. */
-            __('%s dots', 'poller'),
-            number_format_i18n($dots)
-        );
-        return $label . ' · ' . $dots_label;
-    }
+	/**
+	 * @param array<string, mixed> $state
+	 */
+	private function summary( array $state ): string {
+		$parts = [ self::total_label( (int) $state['ballots'], $state ) ];
+		if ( 'words' === $state['selection'] ) {
+			foreach ( $state['words'] as $word ) {
+				$parts[] = $word['text'] . ' ' . (int) $word['count'];
+			}
+			return implode( '. ', $parts ) . '.';
+		}
+		$dots = 'dots' === $state['selection'];
+		foreach ( $state['choices'] as $choice ) {
+			$votes = (int) $choice['votes'];
+			if ( ! $dots ) {
+				$parts[] = $choice['label'] . ' ' . $votes;
+				continue;
+			}
+			$parts[] = $choice['label'] . ' ' . ( 1 === $votes ? __( '1 dot', 'poller' ) : sprintf(
+				/* translators: %s is the number of dots. */
+				__( '%s dots', 'poller' ),
+				number_format_i18n( $votes )
+			) );
+		}
+		return implode( '. ', $parts ) . '.';
+	}
 
-    private function human_url(string $url): string
-    {
-        $human = preg_replace('#^https?://#', '', untrailingslashit($url));
-        return $human ? $human : $url;
-    }
+	/**
+	 * @param array<string, mixed> $state
+	 */
+	public static function total_label( int $ballots, array $state = [] ): string {
+		if ( 0 === $ballots ) {
+			return __( 'No votes yet', 'poller' );
+		}
+		if ( 1 === $ballots ) {
+			$label = __( '1 vote', 'poller' );
+		} else {
+			$label = sprintf(
+				/* translators: %s is the number of ballots. */
+				__( '%s votes', 'poller' ),
+				number_format_i18n( $ballots )
+			);
+		}
+		if ( ( $state['selection'] ?? '' ) !== 'dots' ) {
+			return $label;
+		}
+		$dots = (int) $state['dots'];
+		$dots_label = 1 === $dots ? __( '1 dot', 'poller' ) : sprintf(
+			/* translators: %s is the number of dots. */
+			__( '%s dots', 'poller' ),
+			number_format_i18n( $dots )
+		);
+		return $label . ' · ' . $dots_label;
+	}
 
-    private function redirect_vote_error(string $target, string $code): void
-    {
-        wp_safe_redirect(add_query_arg('vote', sanitize_key($code), $target));
-        exit;
-    }
+	private function human_url( string $url ): string {
+		$human = preg_replace( '#^https?://#', '', untrailingslashit( $url ) );
+		return $human ? $human : $url;
+	}
 
-    /**
-     * @param array<string, mixed> $data
-     */
-    private function capture(string $template, array $data): string
-    {
-        $path = POLLER_DIR . 'templates/' . $template . '.php';
-        ob_start();
-        (static function (string $path, array $data) {
-            extract($data, EXTR_SKIP);
-            require $path;
-        })($path, $data);
-        return (string) ob_get_clean();
-    }
+	private function redirect_vote_error( string $target, string $code ): void {
+		wp_safe_redirect( add_query_arg( 'vote', sanitize_key( $code ), $target ) );
+		exit;
+	}
 
-    private function send(string $title, string $body_class, string $body, int $status, bool $qr): void
-    {
-        status_header($status);
-        nocache_headers();
-        header('X-Robots-Tag: noindex, nofollow', true);
+	/**
+	 * @param array<string, mixed> $data
+	 */
+	private function capture( string $template, array $data ): string {
+		$path = POLLER_DIR . 'templates/' . $template . '.php';
+		ob_start();
+		( static function ( string $path, array $data ) {
+			extract( $data, EXTR_SKIP ); // phpcs:ignore WordPress.PHP.DontExtract.extract_extract -- Template scope; keys are controlled by capture() callers.
+			require $path;
+		} )( $path, $data );
+		return (string) ob_get_clean();
+	}
 
-        wp_enqueue_style('poller-fonts', POLLER_URL . 'assets/css/fonts.css', [], POLLER_VERSION);
-        wp_enqueue_style('poller', POLLER_URL . 'assets/css/poller.css', ['poller-fonts'], POLLER_VERSION);
+	private function send( string $title, string $body_class, string $body, int $status, bool $qr ): void {
+		status_header( $status );
+		nocache_headers();
+		header( 'X-Robots-Tag: noindex, nofollow', true );
 
-        $scripts = [];
-        if ($qr) {
-            wp_enqueue_script('poller-qrcode', POLLER_URL . 'assets/js/qrcode.js', [], POLLER_VERSION, false);
-            $scripts[] = 'poller-qrcode';
-        }
-        if (str_contains($body, 'data-poller-cloud')) {
-            wp_enqueue_script('poller-cloud', POLLER_URL . 'assets/js/cloud.js', [], POLLER_VERSION, false);
-            $scripts[] = 'poller-cloud';
-        }
-        if ($qr || str_contains($body, 'id="poller-state"')) {
-            wp_enqueue_script('poller', POLLER_URL . 'assets/js/poller.js', $qr ? ['poller-qrcode'] : [], POLLER_VERSION, false);
-            $scripts[] = 'poller';
-        }
-        ?>
+		wp_enqueue_style( 'poller-fonts', POLLER_URL . 'assets/css/fonts.css', [], POLLER_VERSION );
+		wp_enqueue_style( 'poller', POLLER_URL . 'assets/css/poller.css', [ 'poller-fonts' ], POLLER_VERSION );
+
+		$scripts = [];
+		if ( $qr ) {
+			wp_enqueue_script( 'poller-qrcode', POLLER_URL . 'assets/js/qrcode.js', [], POLLER_VERSION, false );
+			$scripts[] = 'poller-qrcode';
+		}
+		if ( str_contains( $body, 'data-poller-cloud' ) ) {
+			wp_enqueue_script( 'poller-cloud', POLLER_URL . 'assets/js/cloud.js', [], POLLER_VERSION, false );
+			$scripts[] = 'poller-cloud';
+		}
+		if ( $qr || str_contains( $body, 'id="poller-state"' ) ) {
+			wp_enqueue_script( 'poller', POLLER_URL . 'assets/js/poller.js', $qr ? [ 'poller-qrcode' ] : [], POLLER_VERSION, false );
+			$scripts[] = 'poller';
+		}
+		?>
 <!DOCTYPE html>
 <html <?php language_attributes(); ?>>
 <head>
-<meta charset="<?php bloginfo('charset'); ?>">
+<meta charset="<?php bloginfo( 'charset' ); ?>">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title><?php echo esc_html($title); ?></title>
-        <?php wp_print_styles(['poller-fonts', 'poller']); ?>
+<title><?php echo esc_html( $title ); ?></title>
+		<?php wp_print_styles( [ 'poller-fonts', 'poller' ] ); ?>
 </head>
-<body class="<?php echo esc_attr($body_class); ?>">
-        <?php
-        // Template markup is escaped at each value.
-        echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-        if ($scripts) {
-            wp_print_scripts($scripts);
-        }
-        ?>
+<body class="<?php echo esc_attr( $body_class ); ?>">
+		<?php
+		// Template markup is escaped at each value.
+		echo $body; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		if ( $scripts ) {
+			wp_print_scripts( $scripts );
+		}
+		?>
 </body>
 </html>
-        <?php
-    }
+		<?php
+	}
 }

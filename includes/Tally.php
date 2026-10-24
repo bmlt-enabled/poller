@@ -7,106 +7,117 @@
 
 namespace BmltEnabled\Poller;
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-class Tally
-{
-    /** Rows shown on a dot voting tally before "Show all". */
-    public const TOP = 10;
+class Tally {
 
-    /** Most words a word cloud payload carries. */
-    public const CLOUD = 100;
+	/** Rows shown on a dot voting tally before "Show all". */
+	public const TOP = 10;
 
-    /**
-     * Percent for one choice's bar. A dot poll shows its share of all dots
-     * cast; the others show the share of ballots that picked it.
-     *
-     * @param array<string, mixed> $state
-     */
-    public static function share(int $votes, array $state): float
-    {
-        $total = ($state['selection'] ?? '') === 'dots'
-            ? (int) ($state['dots'] ?? 0)
-            : (int) ($state['ballots'] ?? 0);
-        if ($total <= 0) {
-            return 0.0;
-        }
-        return round(($votes / $total) * 100, 1);
-    }
+	/** Most words a word cloud payload carries. */
+	public const CLOUD = 100;
 
-    /**
-     * Most votes first. Ties keep the poll's own order.
-     *
-     * @param array<int, array<string, mixed>> $choices
-     * @return array<int, array<string, mixed>>
-     */
-    public static function rank(array $choices): array
-    {
-        $order = [];
-        foreach (array_values($choices) as $index => $choice) {
-            $order[] = [$index, $choice];
-        }
-        usort($order, static function ($a, $b) {
-            $diff = (int) $b[1]['votes'] <=> (int) $a[1]['votes'];
-            return $diff !== 0 ? $diff : $a[0] <=> $b[0];
-        });
-        return array_map(static function ($pair) {
-            return $pair[1];
-        }, $order);
-    }
+	/**
+	 * Percent for one choice's bar. A dot poll shows its share of all dots
+	 * cast; the others show the share of ballots that picked it.
+	 *
+	 * @param array<string, mixed> $state
+	 */
+	public static function share( int $votes, array $state ): float {
+		$total = ( $state['selection'] ?? '' ) === 'dots'
+			? (int) ( $state['dots'] ?? 0 )
+			: (int) ( $state['ballots'] ?? 0 );
+		if ( $total <= 0 ) {
+			return 0.0;
+		}
+		return round( ( $votes / $total ) * 100, 1 );
+	}
 
-    /**
-     * Word cloud tally from stored entries. Each row is a spelling of a key
-     * and how many ballots used it (Repository::word_rows() sends one row per
-     * entry, so the same spelling comes in many rows). A ballot holds a key
-     * at most once, so the sum per key is the number of ballots that entered it.
-     *
-     * Shows the most common spelling. Hidden keys are left out. Most ballots
-     * first, then alphabetical, so the order is stable between refreshes.
-     *
-     * @param array<int, array{key: string, text: string, count: int|string}> $rows
-     * @param array<int, string> $hidden keys
-     * @return array<int, array{text: string, key: string, count: int}>
-     */
-    public static function words(array $rows, array $hidden = [], int $limit = self::CLOUD): array
-    {
-        $skip = array_fill_keys($hidden, true);
-        $totals = [];
-        $spellings = [];
-        foreach ($rows as $row) {
-            $key = (string) $row['key'];
-            if ($key === '' || isset($skip[$key])) {
-                continue;
-            }
-            $count = (int) $row['count'];
-            $text = (string) $row['text'];
-            $totals[$key] = ($totals[$key] ?? 0) + $count;
-            $spellings[$key][$text] = ($spellings[$key][$text] ?? 0) + $count;
-        }
+	/**
+	 * Most votes first. Ties keep the poll's own order.
+	 *
+	 * @param array<int, array<string, mixed>> $choices
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function rank( array $choices ): array {
+		$order = [];
+		foreach ( array_values( $choices ) as $index => $choice ) {
+			$order[] = [ $index, $choice ];
+		}
+		usort(
+			$order,
+			static function ( $a, $b ) {
+				$diff = (int) $b[1]['votes'] <=> (int) $a[1]['votes'];
+				return 0 !== $diff ? $diff : $a[0] <=> $b[0];
+			}
+		);
+		return array_map(
+			static function ( $pair ) {
+				return $pair[1];
+			},
+			$order
+		);
+	}
 
-        // Most used spelling per key, after every row is counted. A tie goes
-        // to the one that sorts first, so it is the same on every refresh.
-        $spelling = [];
-        foreach ($spellings as $key => $counts) {
-            $best = null;
-            foreach ($counts as $text => $count) {
-                $text = (string) $text;
-                if ($best === null || $count > $best[1] || ($count === $best[1] && strcmp($text, $best[0]) < 0)) {
-                    $best = [$text, $count];
-                }
-            }
-            $spelling[$key] = $best;
-        }
+	/**
+	 * Word cloud tally from stored entries. Each row is a spelling of a key
+	 * and how many ballots used it (Repository::word_rows() sends one row per
+	 * entry, so the same spelling comes in many rows). A ballot holds a key
+	 * at most once, so the sum per key is the number of ballots that entered it.
+	 *
+	 * Shows the most common spelling. Hidden keys are left out. Most ballots
+	 * first, then alphabetical, so the order is stable between refreshes.
+	 *
+	 * @param array<int, array{key: string, text: string, count: int|string}> $rows
+	 * @param array<int, string> $hidden keys
+	 * @return array<int, array{text: string, key: string, count: int}>
+	 */
+	public static function words( array $rows, array $hidden = [], int $limit = self::CLOUD ): array {
+		$skip = array_fill_keys( $hidden, true );
+		$totals = [];
+		$spellings = [];
+		foreach ( $rows as $row ) {
+			$key = (string) $row['key'];
+			if ( '' === $key || isset( $skip[ $key ] ) ) {
+				continue;
+			}
+			$count = (int) $row['count'];
+			$text = (string) $row['text'];
+			$totals[ $key ] = ( $totals[ $key ] ?? 0 ) + $count;
+			$spellings[ $key ][ $text ] = ( $spellings[ $key ][ $text ] ?? 0 ) + $count;
+		}
 
-        $words = [];
-        foreach ($totals as $key => $count) {
-            $words[] = ['text' => $spelling[$key][0], 'key' => (string) $key, 'count' => $count];
-        }
-        usort($words, static function ($a, $b) {
-            return ($b['count'] <=> $a['count']) ?: strcmp($a['key'], $b['key']);
-        });
-        return $limit > 0 ? array_slice($words, 0, $limit) : $words;
-    }
+		// Most used spelling per key, after every row is counted. A tie goes
+		// to the one that sorts first, so it is the same on every refresh.
+		$spelling = [];
+		foreach ( $spellings as $key => $counts ) {
+			$best = null;
+			foreach ( $counts as $text => $count ) {
+				$text = (string) $text;
+				if ( null === $best || $count > $best[1] || ( $count === $best[1] && strcmp( $text, $best[0] ) < 0 ) ) {
+					$best = [ $text, $count ];
+				}
+			}
+			$spelling[ $key ] = $best;
+		}
+
+		$words = [];
+		foreach ( $totals as $key => $count ) {
+			$words[] = [
+				'text' => $spelling[ $key ][0],
+				'key' => (string) $key,
+				'count' => $count,
+			];
+		}
+		usort(
+			$words,
+			static function ( $a, $b ) {
+				$cmp = $b['count'] <=> $a['count'];
+				return 0 !== $cmp ? $cmp : strcmp( $a['key'], $b['key'] );
+			}
+		);
+		return $limit > 0 ? array_slice( $words, 0, $limit ) : $words;
+	}
 }
