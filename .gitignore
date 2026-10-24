@@ -1,5 +1,9 @@
 .DS_Store
+.idea
+.vscode/*
 .phpunit.result.cache
 .phpunit.cache
 build/
+logs/
+vendor/
 *.zip

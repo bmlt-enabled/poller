@@ -515,6 +515,9 @@ if (PHP_SAPI === 'cli-server') {
     return poller_preview_serve();
 }
 
-if (PHP_SAPI === 'cli') {
+// Only self-check when run directly (php bin/preview.php), not when required
+// by the test suite, which exercises the same renders via assertions.
+$poller_preview_script = isset($_SERVER['SCRIPT_FILENAME']) ? realpath($_SERVER['SCRIPT_FILENAME']) : '';
+if (PHP_SAPI === 'cli' && $poller_preview_script === __FILE__) {
     poller_preview_self_check();
 }

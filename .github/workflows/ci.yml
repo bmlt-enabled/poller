@@ -7,32 +7,76 @@ on:
     branches: [ 'main' ]
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out code 🛒
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup PHP 🐫
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
+          php-version: 8.3
 
-      - name: Run tests 🧪
-        run: make test
+      - name: Linter 🧹
+        id: linter
+        run: make lint
+
+  test:
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: wordpress_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    strategy:
+      matrix:
+        php-version: ["8.3", "8.4"]
+    steps:
+      - name: Check out code 🛒
+        uses: actions/checkout@v7
+
+      - name: Setup PHP 🐫
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mysqli
+          tools: composer
+
+      - name: Install dependencies 📦
+        run: composer install --prefer-dist --no-progress
+
+      - name: Install WordPress test suite 🔧
+        run: bash bin/install-wp-tests.sh wordpress_test root root 127.0.0.1 latest
+
+      - name: Run PHPUnit 🧪
+        run: vendor/bin/phpunit --colors=always
+        env:
+          DB_HOST: 127.0.0.1
+          DB_USER: root
+          DB_PASS: root
+          DB_NAME: wordpress_test
 
   package:
     runs-on: ubuntu-24.04
-    needs: [ test ]
+    needs: [ lint, test ]
     steps:
       - name: Check out code 🛒
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build plugin zip 📦
         run: make build
 
       - name: Upload plugin zip ⬆️
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: poller
           path: build/poller.zip
@@ -41,7 +85,7 @@ jobs:
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    needs: [ test ]
+    needs: [ lint, test ]
     permissions:
       id-token: write
       contents: read
@@ -52,7 +96,7 @@ jobs:
       PLUGIN: poller
     steps:
       - name: Check out code 🛒
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Build plugin zip 📦
         run: |
@@ -61,7 +105,7 @@ jobs:
           make build
 
       - name: Configure AWS credentials 🪪
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions/gh-ci-s3-artifact
           role-session-name: gh-actions-${{ env.PLUGIN }}

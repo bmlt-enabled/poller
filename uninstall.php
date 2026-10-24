@@ -5,10 +5,10 @@
  * @package Poller
  */
 
-if (!defined('WP_UNINSTALL_PLUGIN')) {
-    exit;
+if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
+	exit;
 }
 
 require_once __DIR__ . '/includes/Repository.php';
 
-(new BmltEnabled\Poller\Repository())->drop_tables();
+( new BmltEnabled\Poller\Repository() )->drop_tables();

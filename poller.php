@@ -14,35 +14,46 @@
  * @package Poller
  */
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-define('POLLER_VERSION', '0.3.0');
-define('POLLER_FILE', __FILE__);
-define('POLLER_DIR', plugin_dir_path(__FILE__));
-define('POLLER_URL', plugin_dir_url(__FILE__));
+define( 'POLLER_VERSION', '0.3.0' );
+define( 'POLLER_FILE', __FILE__ );
+define( 'POLLER_DIR', plugin_dir_path( __FILE__ ) );
+define( 'POLLER_URL', plugin_dir_url( __FILE__ ) );
 
-spl_autoload_register(static function ($class) {
-    $prefix = 'BmltEnabled\\Poller\\';
-    if (!str_starts_with($class, $prefix)) {
-        return;
-    }
-    $relative = substr($class, strlen($prefix));
-    $path = POLLER_DIR . 'includes/' . str_replace('\\', '/', $relative) . '.php';
-    if (is_readable($path)) {
-        require $path;
-    }
-});
+spl_autoload_register(
+	static function ( $class ) {
+		$prefix = 'BmltEnabled\\Poller\\';
+		if ( ! str_starts_with( $class, $prefix ) ) {
+			return;
+		}
+		$relative = substr( $class, strlen( $prefix ) );
+		$path = POLLER_DIR . 'includes/' . str_replace( '\\', '/', $relative ) . '.php';
+		if ( is_readable( $path ) ) {
+			require $path;
+		}
+	}
+);
 
-register_activation_hook(POLLER_FILE, static function () {
-    (new BmltEnabled\Poller\Plugin())->activate();
-});
+register_activation_hook(
+	POLLER_FILE,
+	static function () {
+		( new BmltEnabled\Poller\Plugin() )->activate();
+	}
+);
 
-register_deactivation_hook(POLLER_FILE, static function () {
-    flush_rewrite_rules();
-});
+register_deactivation_hook(
+	POLLER_FILE,
+	static function () {
+		flush_rewrite_rules();
+	}
+);
 
-add_action('plugins_loaded', static function () {
-    (new BmltEnabled\Poller\Plugin())->boot();
-});
+add_action(
+	'plugins_loaded',
+	static function () {
+		( new BmltEnabled\Poller\Plugin() )->boot();
+	}
+);

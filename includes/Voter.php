@@ -11,54 +11,53 @@
 
 namespace BmltEnabled\Poller;
 
-if (!defined('ABSPATH')) {
-    exit;
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
 }
 
-class Voter
-{
-    public const COOKIE = 'poller_ballot';
+class Voter {
 
-    public static function has_token(): bool
-    {
-        return (bool) preg_match('/^[a-f0-9]{64}$/', self::cookie());
-    }
+	public const COOKIE = 'poller_ballot';
 
-    public static function token(): string
-    {
-        $cookie = self::cookie();
-        return preg_match('/^[a-f0-9]{64}$/', $cookie) ? $cookie : '';
-    }
+	public static function has_token(): bool {
+		return (bool) preg_match( '/^[a-f0-9]{64}$/', self::cookie() );
+	}
 
-    private static function cookie(): string
-    {
-        if (!isset($_COOKIE[self::COOKIE])) {
-            return '';
-        }
+	public static function token(): string {
+		$cookie = self::cookie();
+		return preg_match( '/^[a-f0-9]{64}$/', $cookie ) ? $cookie : '';
+	}
 
-        return sanitize_text_field(wp_unslash($_COOKIE[self::COOKIE]));
-    }
+	private static function cookie(): string {
+		if ( ! isset( $_COOKIE[ self::COOKIE ] ) ) {
+			return '';
+		}
 
-    public static function ensure(): string
-    {
-        if (self::has_token()) {
-            return self::token();
-        }
+		return sanitize_text_field( wp_unslash( $_COOKIE[ self::COOKIE ] ) );
+	}
 
-        $raw = bin2hex(random_bytes(32));
-        setcookie(self::COOKIE, $raw, [
-            'expires' => time() + 30 * DAY_IN_SECONDS,
-            'path' => '/',
-            'secure' => is_ssl(),
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
-        $_COOKIE[self::COOKIE] = $raw;
-        return $raw;
-    }
+	public static function ensure(): string {
+		if ( self::has_token() ) {
+			return self::token();
+		}
 
-    public static function hash(string $raw): string
-    {
-        return hash('sha256', $raw . '|' . wp_salt('auth'));
-    }
+		$raw = bin2hex( random_bytes( 32 ) );
+		setcookie(
+			self::COOKIE,
+			$raw,
+			[
+				'expires' => time() + 30 * DAY_IN_SECONDS,
+				'path' => '/',
+				'secure' => is_ssl(),
+				'httponly' => true,
+				'samesite' => 'Lax',
+			]
+		);
+		$_COOKIE[ self::COOKIE ] = $raw;
+		return $raw;
+	}
+
+	public static function hash( string $raw ): string {
+		return hash( 'sha256', $raw . '|' . wp_salt( 'auth' ) );
+	}
 }

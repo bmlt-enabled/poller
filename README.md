@@ -34,19 +34,9 @@ Copy this folder to `wp-content/plugins/poller` and activate it. Activation crea
 
 Pretty permalinks are the normal way to the join page, the poll, and the room display. With plain permalinks, those same screens are still available from the links in wp-admin.
 
-## Development
+## Contributing
 
-Requires PHP 8.0+. No build step for the plugin itself.
-
-```bash
-make test
-php -S 127.0.0.1:8899 -t . bin/preview.php
-make build
-```
-
-`make test` runs the code and preview checks. `make build` writes `build/poller.zip` from the current commit. The zip contains a `poller` folder, so it can be uploaded from Plugins → Add New. The preview server, tests, and GitHub workflows are left out of the zip.
-
-The preview server shows the public pages without WordPress. Pushing to `main` runs the checks and uploads that zip as a workflow artifact. A version tag such as `0.1.0` publishes a GitHub release with `poller-0.1.0.zip`. The tag should match a heading in the readme changelog.
+Requires PHP 8.0+. See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, tests, coding standards, building, and releases.
 
 ## License
 
