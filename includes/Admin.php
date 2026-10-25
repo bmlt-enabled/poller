@@ -30,6 +30,7 @@ class Admin {
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue' ] );
 		add_action( 'admin_post_poller_delete_poll', [ $this, 'handle_delete' ] );
 		add_action( 'admin_post_poller_set_status', [ $this, 'handle_status' ] );
+		add_action( 'admin_post_poller_duplicate_poll', [ $this, 'handle_duplicate' ] );
 		add_action( 'admin_post_poller_hide_word', [ $this, 'handle_hide_word' ] );
 	}
 
@@ -172,6 +173,23 @@ class Admin {
 	}
 
 	/**
+	 * Copy a poll's setup and choices into a new closed poll, then open the
+	 * copy's edit screen.
+	 */
+	public function handle_duplicate(): void {
+		$id = absint( $_POST['poll_id'] ?? 0 );
+		check_admin_referer( 'poller_duplicate_poll_' . $id );
+		$this->guard();
+		$copy = $this->repo->duplicate_poll( $id );
+		if ( null === $copy ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=poller&poller_notice=not_duplicated' ) );
+			exit;
+		}
+		wp_safe_redirect( admin_url( 'admin.php?page=poller-edit&poll=' . $copy . '&poller_notice=duplicated' ) );
+		exit;
+	}
+
+	/**
 	 * Hide a word cloud entry, or show it again. Posted from the poll's edit
 	 * screen or from the results on the public poll page.
 	 */
@@ -237,6 +255,15 @@ class Admin {
 												<input type="hidden" name="poll_id" value="<?php echo esc_attr( (string) $poll['id'] ); ?>">
 												<input type="hidden" name="status" value="<?php echo 'open' === $poll['status'] ? 'closed' : 'open'; ?>">
 												<button type="submit" class="button-link"><?php echo 'open' === $poll['status'] ? esc_html__( 'Close', 'poller' ) : esc_html__( 'Reopen', 'poller' ); ?></button>
+											</form>
+											|
+										</span>
+										<span>
+											<form class="poller-inline-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+												<?php wp_nonce_field( 'poller_duplicate_poll_' . (int) $poll['id'] ); ?>
+												<input type="hidden" name="action" value="poller_duplicate_poll">
+												<input type="hidden" name="poll_id" value="<?php echo esc_attr( (string) $poll['id'] ); ?>">
+												<button type="submit" class="button-link"><?php esc_html_e( 'Duplicate', 'poller' ); ?></button>
 											</form>
 											|
 										</span>
@@ -497,6 +524,8 @@ class Admin {
 			'deleted' => __( 'Poll deleted.', 'poller' ),
 			'closed' => __( 'Poll closed.', 'poller' ),
 			'opened' => __( 'Poll opened.', 'poller' ),
+			'duplicated' => __( 'Poll duplicated.', 'poller' ),
+			'not_duplicated' => __( 'That poll could not be duplicated. Try again.', 'poller' ),
 			'kept' => __( 'People voted while you were editing, so the choices were kept.', 'poller' ),
 			'hidden' => __( 'Word hidden.', 'poller' ),
 			'shown' => __( 'Word shown again.', 'poller' ),
@@ -504,7 +533,7 @@ class Admin {
 		if ( ! isset( $map[ $key ] ) ) {
 			return;
 		}
-		$class = 'kept' === $key ? 'notice-warning' : 'notice-success';
+		$class = in_array( $key, [ 'kept', 'not_duplicated' ], true ) ? 'notice-warning' : 'notice-success';
 		echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible"><p>' . esc_html( $map[ $key ] ) . '</p></div>';
 	}
 

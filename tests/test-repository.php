@@ -278,4 +278,89 @@ class Test_Repository extends WP_UnitTestCase {
 		$this->expectExceptionMessage( 'closed' );
 		$this->repo->cast_words( $id, str_repeat( 'i', 64 ), [ [ 'text' => 'Hope', 'key' => 'hope' ] ] );
 	}
+
+	// -------------------------------------------------------------------------
+	// Duplicating a poll
+	// -------------------------------------------------------------------------
+
+	public function test_duplicate_poll_copies_setup_and_choices_into_a_closed_poll() {
+		$id = $this->make_poll( [ 'kind' => 'image', 'image_id' => 7, 'selection' => 'multi' ] );
+		$this->repo->replace_choices(
+			$id,
+			[
+				[ 'label' => 'Red', 'image_id' => 11 ],
+				[ 'label' => 'Green', 'image_id' => 12 ],
+				[ 'label' => 'Blue', 'image_id' => 13 ],
+			]
+		);
+		$choices = $this->repo->get_choices( $id );
+		$this->repo->cast( $id, str_repeat( 'j', 64 ), [ (int) $choices[1]['id'] => 1 ] );
+		$before = $this->repo->get_poll( $id );
+
+		$copy_id = $this->repo->duplicate_poll( $id );
+		$this->assertIsInt( $copy_id );
+		$this->assertNotSame( $id, $copy_id );
+
+		$copy = $this->repo->get_poll( $copy_id );
+		$this->assertNotSame( $before['code'], $copy['code'], 'the copy gets its own code' );
+		$this->assertSame( 'Snacks (copy)', $copy['title'] );
+		$this->assertSame( 'closed', $copy['status'], 'the copy does not go live by accident' );
+		foreach ( [ 'question', 'image_id', 'kind', 'selection', 'budget', 'per_choice', 'spend_all' ] as $field ) {
+			$this->assertSame( $before[ $field ], $copy[ $field ], "the copy keeps {$field}" );
+		}
+
+		$copied = $this->repo->get_choices( $copy_id );
+		$this->assertSame( [ 'Red', 'Green', 'Blue' ], array_column( $copied, 'label' ) );
+		$this->assertSame( [ 11, 12, 13 ], array_column( $copied, 'image_id' ) );
+		$this->assertSame( [ 0, 1, 2 ], array_column( $copied, 'position' ) );
+		$this->assertEmpty( array_intersect( array_column( $choices, 'id' ), array_column( $copied, 'id' ) ), 'the copy has its own choice rows' );
+
+		$this->assertSame( 0, $this->repo->ballot_count( $copy_id ), 'the copy has no ballots' );
+		$this->assertSame( [], $this->repo->choice_counts( $copy_id ), 'the copy has no votes' );
+		$this->assertTrue( $this->repo->replace_choices( $copy_id, [ [ 'label' => 'Only', 'image_id' => 0 ] ] ), 'the copy\'s choices stay editable' );
+
+		$this->assertSame( $before, $this->repo->get_poll( $id ), 'the original is unchanged' );
+		$this->assertSame( $choices, $this->repo->get_choices( $id ) );
+		$this->assertSame( 1, $this->repo->ballot_count( $id ) );
+	}
+
+	public function test_duplicate_poll_keeps_dot_rules() {
+		$id = $this->make_poll( [ 'selection' => 'dots', 'budget' => 5, 'per_choice' => 3, 'spend_all' => true ] );
+		$this->repo->replace_choices( $id, [ [ 'label' => 'A', 'image_id' => 0 ], [ 'label' => 'B', 'image_id' => 0 ] ] );
+
+		$copy = $this->repo->get_poll( (int) $this->repo->duplicate_poll( $id ) );
+		$this->assertSame( 'dots', $copy['selection'] );
+		$this->assertSame( 5, $copy['budget'] );
+		$this->assertSame( 3, $copy['per_choice'] );
+		$this->assertTrue( $copy['spend_all'] );
+		$this->assertCount( 2, $this->repo->get_choices( $copy['id'] ) );
+	}
+
+	public function test_duplicate_poll_starts_a_word_cloud_empty() {
+		$id = $this->make_poll( [ 'selection' => 'words', 'kind' => 'text', 'budget' => 3 ] );
+		$this->repo->cast_words( $id, str_repeat( 'k', 64 ), [ [ 'text' => 'Hope', 'key' => 'hope' ] ] );
+		$this->repo->set_word_hidden( $id, 'hope', true );
+
+		$copy_id = (int) $this->repo->duplicate_poll( $id );
+		$copy = $this->repo->get_poll( $copy_id );
+		$this->assertSame( 'words', $copy['selection'] );
+		$this->assertSame( 3, $copy['budget'] );
+		$this->assertSame( [], $this->repo->get_choices( $copy_id ) );
+		$this->assertSame( [], $this->repo->word_rows( $copy_id ), 'the copy has no words' );
+		$this->assertSame( [], $this->repo->hidden_words( $copy_id ), 'the copy has no hidden words' );
+		$this->assertSame( [ 'hope' ], $this->repo->hidden_words( $id ), 'the original keeps its hidden words' );
+		$this->assertCount( 1, $this->repo->word_rows( $id ) );
+	}
+
+	public function test_duplicate_poll_trims_a_long_title_to_fit() {
+		$id = $this->make_poll( [ 'title' => str_repeat( 'é', 160 ) ] );
+		$copy = $this->repo->get_poll( (int) $this->repo->duplicate_poll( $id ) );
+		$this->assertSame( 160, mb_strlen( $copy['title'] ) );
+		$this->assertStringEndsWith( ' (copy)', $copy['title'] );
+	}
+
+	public function test_duplicate_poll_returns_null_for_a_missing_poll() {
+		$this->assertNull( $this->repo->duplicate_poll( 999999 ) );
+		$this->assertCount( 0, $this->repo->list_polls() );
+	}
 }
