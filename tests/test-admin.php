@@ -284,4 +284,72 @@ class Test_Admin extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'poller_notice=hidden', $location );
 		$this->assertSame( [ 'hope' ], $this->repo->hidden_words( $id ) );
 	}
+
+	// -------------------------------------------------------------------------
+	// handle_duplicate
+	// -------------------------------------------------------------------------
+
+	public function test_render_list_has_a_duplicate_action() {
+		$id = $this->make_poll();
+		$html = $this->render( 'render_list' );
+		$this->assertStringContainsString( 'value="poller_duplicate_poll"', $html );
+		$this->assertStringContainsString( 'Duplicate', $html );
+		$this->assertStringContainsString( 'name="poll_id" value="' . $id . '"', $html );
+	}
+
+	public function test_handle_duplicate_copies_and_opens_the_copy() {
+		$id = $this->make_poll();
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_duplicate_poll_' . $id );
+		$location = poller_catch_redirect( [ $this->admin, 'handle_duplicate' ] );
+
+		$polls = $this->repo->list_polls();
+		$this->assertCount( 2, $polls );
+		$copy_id = (int) max( array_column( $polls, 'id' ) );
+		$this->assertStringContainsString( 'page=poller-edit&poll=' . $copy_id . '&poller_notice=duplicated', $location );
+		$copy = $this->repo->get_poll( $copy_id );
+		$this->assertSame( 'Snacks (copy)', $copy['title'] );
+		$this->assertSame( 'closed', $copy['status'] );
+		$this->assertSame( [ 'A', 'B' ], array_column( $this->repo->get_choices( $copy_id ), 'label' ) );
+
+		$_GET['poller_notice'] = 'duplicated';
+		$_GET['poll'] = $copy_id;
+		$this->assertStringContainsString( 'Poll duplicated.', $this->render( 'render_edit' ) );
+	}
+
+	public function test_handle_duplicate_missing_poll_warns() {
+		$_POST['poll_id'] = 999999;
+		$this->nonce( 'poller_duplicate_poll_999999' );
+		$location = poller_catch_redirect( [ $this->admin, 'handle_duplicate' ] );
+		$this->assertStringContainsString( 'page=poller&poller_notice=not_duplicated', $location );
+		$this->assertCount( 0, $this->repo->list_polls() );
+
+		$_GET['poller_notice'] = 'not_duplicated';
+		$this->assertStringContainsString( 'notice-warning', $this->render( 'render_list' ) );
+	}
+
+	public function test_handle_duplicate_rejects_a_bad_nonce() {
+		$id = $this->make_poll();
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_duplicate_poll_' . ( $id + 1 ) );
+		try {
+			$this->admin->handle_duplicate();
+			$this->fail( 'a bad nonce should die' );
+		} catch ( WPDieException $e ) {
+			$this->assertCount( 1, $this->repo->list_polls(), 'nothing is copied' );
+		}
+	}
+
+	public function test_handle_duplicate_rejects_a_non_admin() {
+		$id = $this->make_poll();
+		wp_set_current_user( self::factory()->user->create( [ 'role' => 'subscriber' ] ) );
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_duplicate_poll_' . $id );
+		try {
+			$this->admin->handle_duplicate();
+			$this->fail( 'a non-admin should die' );
+		} catch ( WPDieException $e ) {
+			$this->assertCount( 1, $this->repo->list_polls(), 'nothing is copied' );
+		}
+	}
 }

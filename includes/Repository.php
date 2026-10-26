@@ -224,6 +224,65 @@ class Repository {
 		$wpdb->delete( $this->table( 'polls' ), [ 'id' => $id ], [ '%d' ] );
 	}
 
+	/**
+	 * Copy a poll's setup and choices into a new, closed poll with its own
+	 * code. Ballots, votes, words and hidden words are not copied.
+	 *
+	 * Returns the new poll's id, or null if the poll does not exist or the
+	 * copy could not be saved.
+	 */
+	public function duplicate_poll( int $id ): ?int {
+		$poll = $this->get_poll( $id );
+		if ( ! $poll ) {
+			return null;
+		}
+
+		try {
+			$code = $this->next_code();
+		} catch ( \RuntimeException $e ) {
+			return null;
+		}
+
+		// The title column holds 160 characters, so trim the name to fit the suffix.
+		$suffix = ' ' . __( '(copy)', 'poller' );
+		$room = 160 - ( function_exists( 'mb_strlen' ) ? mb_strlen( $suffix ) : strlen( $suffix ) );
+		$title = function_exists( 'mb_substr' ) ? mb_substr( $poll['title'], 0, $room ) : substr( $poll['title'], 0, $room );
+
+		$copy = $this->insert_poll(
+			[
+				'code' => $code,
+				'title' => $title . $suffix,
+				'question' => $poll['question'],
+				'image_id' => $poll['image_id'],
+				'kind' => $poll['kind'],
+				'selection' => $poll['selection'],
+				'budget' => $poll['budget'],
+				'per_choice' => $poll['per_choice'],
+				'spend_all' => $poll['spend_all'],
+				'status' => 'closed',
+			]
+		);
+		if ( ! $copy ) {
+			return null;
+		}
+
+		$choices = array_map(
+			static function ( $choice ) {
+				return [
+					'label' => $choice['label'],
+					'image_id' => $choice['image_id'],
+				];
+			},
+			$this->get_choices( $id )
+		);
+		if ( ! $this->replace_choices( $copy, $choices ) ) {
+			$this->delete_poll( $copy );
+			return null;
+		}
+
+		return $copy;
+	}
+
 	public function get_poll( int $id ): ?array {
 		global $wpdb;
 

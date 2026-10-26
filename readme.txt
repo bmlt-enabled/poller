@@ -4,7 +4,7 @@ Tags: poll, voting, qr-code, anonymous, word-cloud
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 8.0
-Stable tag: 0.3.0
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,6 +26,9 @@ Votes are anonymous. The plugin stores a salted hash of a random browser token a
 4. Open the room display and let people scan or enter the code.
 
 == Changelog ==
+
+= 0.4.0 =
+* Duplicate a poll from the poll list. The copy keeps the question, picture, voting rules and choices, gets a new code, and starts closed with no votes, so you can tweak it and run it again.
 
 = 0.3.0 =
 * Word cloud: each person enters up to 10 words or short phrases (3 by default), and the room display builds a live cloud sized by how many people entered each word. Case and punctuation variants count as one word.
