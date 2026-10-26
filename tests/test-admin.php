@@ -352,4 +352,111 @@ class Test_Admin extends WP_UnitTestCase {
 			$this->assertCount( 1, $this->repo->list_polls(), 'nothing is copied' );
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// handle_reset
+	// -------------------------------------------------------------------------
+
+	private function make_voted_poll(): int {
+		$id = $this->make_poll();
+		$choices = $this->repo->get_choices( $id );
+		$this->repo->cast( $id, str_repeat( 'r', 64 ), [ (int) $choices[0]['id'] => 1 ] );
+		return $id;
+	}
+
+	public function test_render_list_has_a_reset_action() {
+		$id = $this->make_poll();
+		$html = $this->render( 'render_list' );
+		$this->assertStringContainsString( 'value="poller_reset_poll"', $html );
+		$this->assertStringContainsString( 'Reset votes', $html );
+		$this->assertStringContainsString( wp_create_nonce( 'poller_reset_poll_' . $id ), $html );
+	}
+
+	public function test_render_edit_locked_poll_links_to_reset() {
+		$id = $this->make_voted_poll();
+		$_GET['poll'] = $id;
+		$html = $this->render( 'render_edit' );
+		$this->assertStringContainsString( 'Reset votes to change the rules', $html );
+		$this->assertStringContainsString( 'form="poller-reset-form"', $html );
+		$this->assertStringContainsString( 'id="poller-reset-form"', $html );
+	}
+
+	public function test_render_edit_open_poll_has_no_reset_link() {
+		$_GET['poll'] = $this->make_poll();
+		$this->assertStringNotContainsString( 'poller-reset-form', $this->render( 'render_edit' ) );
+	}
+
+	public function test_handle_reset_clears_votes_and_goes_back() {
+		$id = $this->make_voted_poll();
+		$revision = $this->repo->get_poll( $id )['revision'];
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_reset_poll_' . $id );
+		$_REQUEST['_wp_http_referer'] = '/wp-admin/admin.php?page=poller-edit&poll=' . $id . '&poller_notice=saved';
+		$location = poller_catch_redirect( [ $this->admin, 'handle_reset' ] );
+
+		$this->assertStringContainsString( 'page=poller-edit&poll=' . $id . '&poller_notice=reset', $location );
+		$this->assertSame( 0, $this->repo->ballot_count( $id ) );
+		$this->assertCount( 2, $this->repo->get_choices( $id ) );
+		$this->assertGreaterThan( $revision, $this->repo->get_poll( $id )['revision'] );
+
+		$_GET = [
+			'poll' => $id,
+			'poller_notice' => 'reset',
+		];
+		$html = $this->render( 'render_edit' );
+		$this->assertStringContainsString( 'Votes reset.', $html );
+		$this->assertStringNotContainsString( 'poller-admin-locked', $html, 'the rules can be edited again' );
+	}
+
+	public function test_handle_reset_falls_back_to_the_list() {
+		$id = $this->make_voted_poll();
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_reset_poll_' . $id );
+		$location = poller_catch_redirect( [ $this->admin, 'handle_reset' ] );
+		$this->assertStringContainsString( 'page=poller&poller_notice=reset', $location );
+	}
+
+	public function test_handle_reset_missing_poll_goes_to_the_list() {
+		$_POST['poll_id'] = 999999;
+		$this->nonce( 'poller_reset_poll_999999' );
+		$location = poller_catch_redirect( [ $this->admin, 'handle_reset' ] );
+		$this->assertStringContainsString( 'page=poller', $location );
+		$this->assertStringNotContainsString( 'poller_notice', $location );
+	}
+
+	public function test_handle_reset_rejects_a_bad_nonce() {
+		$id = $this->make_voted_poll();
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_reset_poll_' . ( $id + 1 ) );
+		try {
+			$this->admin->handle_reset();
+			$this->fail( 'a bad nonce should die' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( 1, $this->repo->ballot_count( $id ), 'the votes are kept' );
+		}
+	}
+
+	public function test_handle_reset_rejects_a_missing_nonce() {
+		$id = $this->make_voted_poll();
+		$_POST['poll_id'] = $id;
+		try {
+			$this->admin->handle_reset();
+			$this->fail( 'a missing nonce should die' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( 1, $this->repo->ballot_count( $id ), 'the votes are kept' );
+		}
+	}
+
+	public function test_handle_reset_rejects_a_non_admin() {
+		$id = $this->make_voted_poll();
+		wp_set_current_user( self::factory()->user->create( [ 'role' => 'subscriber' ] ) );
+		$_POST['poll_id'] = $id;
+		$this->nonce( 'poller_reset_poll_' . $id );
+		try {
+			$this->admin->handle_reset();
+			$this->fail( 'a non-admin should die' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( 1, $this->repo->ballot_count( $id ), 'the votes are kept' );
+		}
+	}
 }

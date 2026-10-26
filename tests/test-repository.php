@@ -363,4 +363,59 @@ class Test_Repository extends WP_UnitTestCase {
 		$this->assertNull( $this->repo->duplicate_poll( 999999 ) );
 		$this->assertCount( 0, $this->repo->list_polls() );
 	}
+
+	// -------------------------------------------------------------------------
+	// Resetting a poll's votes
+	// -------------------------------------------------------------------------
+
+	public function test_reset_poll_clears_answers_and_keeps_the_poll() {
+		$id = $this->make_poll( [ 'selection' => 'multi' ] );
+		$this->repo->replace_choices( $id, [ [ 'label' => 'A', 'image_id' => 0 ], [ 'label' => 'B', 'image_id' => 0 ] ] );
+		$choices = $this->repo->get_choices( $id );
+		$token = str_repeat( 'm', 64 );
+		$this->repo->cast( $id, $token, [ (int) $choices[0]['id'] => 1 ] );
+		$this->repo->cast( $id, str_repeat( 'n', 64 ), [ (int) $choices[1]['id'] => 1 ] );
+		$this->repo->set_status( $id, 'closed' );
+
+		$other = $this->make_poll();
+		$this->repo->replace_choices( $other, [ [ 'label' => 'X', 'image_id' => 0 ], [ 'label' => 'Y', 'image_id' => 0 ] ] );
+		$this->repo->cast( $other, $token, [ (int) $this->repo->get_choices( $other )[0]['id'] => 1 ] );
+
+		$before = $this->repo->get_poll( $id );
+		$this->assertTrue( $this->repo->reset_poll( $id ) );
+		$after = $this->repo->get_poll( $id );
+
+		$this->assertSame( 0, $this->repo->ballot_count( $id ) );
+		$this->assertSame( [], $this->repo->choice_counts( $id ) );
+		$this->assertNull( $this->repo->get_ballot( $id, $token ), 'a voter sees an unanswered poll' );
+		$this->assertSame( $choices, $this->repo->get_choices( $id ), 'the choices are kept' );
+		$this->assertGreaterThan( $before['revision'], $after['revision'], 'the revision goes up' );
+		$this->assertSame( 'closed', $after['status'], 'a reset does not reopen the poll' );
+		foreach ( [ 'code', 'title', 'question', 'image_id', 'kind', 'selection', 'budget', 'per_choice', 'spend_all' ] as $field ) {
+			$this->assertSame( $before[ $field ], $after[ $field ], "the poll keeps {$field}" );
+		}
+
+		$this->assertSame( 1, $this->repo->ballot_count( $other ), 'other polls keep their votes' );
+		$this->assertNotNull( $this->repo->get_ballot( $other, $token ) );
+
+		$this->assertTrue( $this->repo->replace_choices( $id, [ [ 'label' => 'Only', 'image_id' => 0 ] ] ), 'the choices are editable again' );
+	}
+
+	public function test_reset_poll_clears_words_and_hidden_words() {
+		$id = $this->make_poll( [ 'selection' => 'words', 'kind' => 'text', 'budget' => 3 ] );
+		$this->repo->cast_words( $id, str_repeat( 'o', 64 ), [ [ 'text' => 'Hope', 'key' => 'hope' ] ] );
+		$this->repo->set_word_hidden( $id, 'hope', true );
+
+		$this->assertTrue( $this->repo->reset_poll( $id ) );
+		$this->assertSame( 0, $this->repo->ballot_count( $id ) );
+		$this->assertSame( [], $this->repo->word_rows( $id ) );
+		$this->assertSame( [], $this->repo->hidden_words( $id ) );
+
+		$this->repo->cast_words( $id, str_repeat( 'o', 64 ), [ [ 'text' => 'Calm', 'key' => 'calm' ] ] );
+		$this->assertSame( [ 'calm' ], array_column( $this->repo->word_rows( $id ), 'key' ), 'the same voter can answer again' );
+	}
+
+	public function test_reset_poll_returns_false_for_a_missing_poll() {
+		$this->assertFalse( $this->repo->reset_poll( 999999 ) );
+	}
 }
