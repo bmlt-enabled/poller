@@ -12,6 +12,7 @@ A WordPress plugin for anonymous polls. Someone creates a poll, puts the code an
 - Paste a list to add one choice per line
 - Open or closed. Closing stops new votes and leaves the tally up
 - After the first vote, the choices and voting rules stay put so the tally does not change shape
+- Reset votes starts a new round on the same poll. The code, QR code and choices stay, the live tally starts empty, and earlier rounds' results stay on the poll's edit screen. The choices and voting rules can be changed again until the new round's first vote
 
 ## How people join
 

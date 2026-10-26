@@ -386,7 +386,7 @@ class Test_Admin extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'poller-reset-form', $this->render( 'render_edit' ) );
 	}
 
-	public function test_handle_reset_clears_votes_and_goes_back() {
+	public function test_handle_reset_starts_a_new_round_and_goes_back() {
 		$id = $this->make_voted_poll();
 		$revision = $this->repo->get_poll( $id )['revision'];
 		$_POST['poll_id'] = $id;
@@ -396,6 +396,8 @@ class Test_Admin extends WP_UnitTestCase {
 
 		$this->assertStringContainsString( 'page=poller-edit&poll=' . $id . '&poller_notice=reset', $location );
 		$this->assertSame( 0, $this->repo->ballot_count( $id ) );
+		$this->assertSame( 1, $this->repo->ballot_count( $id, 1 ), 'round 1 is kept' );
+		$this->assertSame( 2, $this->repo->get_poll( $id )['round'] );
 		$this->assertCount( 2, $this->repo->get_choices( $id ) );
 		$this->assertGreaterThan( $revision, $this->repo->get_poll( $id )['revision'] );
 
@@ -404,8 +406,60 @@ class Test_Admin extends WP_UnitTestCase {
 			'poller_notice' => 'reset',
 		];
 		$html = $this->render( 'render_edit' );
-		$this->assertStringContainsString( 'Votes reset.', $html );
+		$this->assertStringContainsString( 'New round started.', $html );
 		$this->assertStringNotContainsString( 'poller-admin-locked', $html, 'the rules can be edited again' );
+		$this->assertStringContainsString( 'Past rounds', $html );
+		$this->assertStringContainsString( 'id="poller-round-1"', $html );
+	}
+
+	public function test_reset_confirm_says_a_new_round_starts() {
+		$this->make_poll();
+		$this->assertStringContainsString( 'Start a new round? Earlier results are kept.', $this->render( 'render_list' ) );
+	}
+
+	public function test_render_edit_has_no_past_rounds_before_a_reset() {
+		$_GET['poll'] = $this->make_voted_poll();
+		$this->assertStringNotContainsString( 'Past rounds', $this->render( 'render_edit' ) );
+	}
+
+	public function test_render_edit_shows_past_round_choice_totals_after_the_choices_change() {
+		$id = $this->make_poll();
+		$choices = $this->repo->get_choices( $id );
+		$this->repo->cast( $id, str_repeat( 'r', 64 ), [ (int) $choices[1]['id'] => 1 ] );
+		$this->repo->cast( $id, str_repeat( 's', 64 ), [ (int) $choices[1]['id'] => 1 ] );
+		$this->repo->cast( $id, str_repeat( 't', 64 ), [ (int) $choices[0]['id'] => 1 ] );
+		$this->repo->reset_poll( $id );
+		$this->repo->replace_choices( $id, [ [ 'label' => 'Fresh', 'image_id' => 0 ], [ 'label' => 'New', 'image_id' => 0 ] ] );
+
+		$_GET['poll'] = $id;
+		$html = $this->render( 'render_edit' );
+		$this->assertStringContainsString( 'Past rounds', $html );
+		$this->assertStringContainsString( 'Round 1: 3 people answered', $html );
+		$past = substr( $html, (int) strpos( $html, 'id="poller-round-1"' ) );
+		$this->assertMatchesRegularExpression( '#<td>B</td><td>2</td>.*<td>A</td><td>1</td>#s', $past, 'round 1 shows its own choices, most votes first' );
+		$this->assertStringNotContainsString( 'Fresh', $past );
+		$this->assertStringContainsString( 'value="Fresh"', $html, 'the current choices are editable' );
+	}
+
+	public function test_render_edit_shows_past_round_words() {
+		$id = $this->make_poll(
+			[
+				'selection' => 'words',
+				'budget' => 3,
+			]
+		);
+		$this->repo->cast_words( $id, str_repeat( 'r', 64 ), [ [ 'text' => 'Hope', 'key' => 'hope' ], [ 'text' => 'Rude', 'key' => 'rude' ] ] );
+		$this->repo->cast_words( $id, str_repeat( 's', 64 ), [ [ 'text' => 'Hope', 'key' => 'hope' ] ] );
+		$this->repo->set_word_hidden( $id, 'rude', true );
+		$this->repo->reset_poll( $id );
+
+		$_GET['poll'] = $id;
+		$html = $this->render( 'render_edit' );
+		$this->assertStringContainsString( 'No words yet.', $html, 'the current round has no words' );
+		$this->assertStringContainsString( 'Round 1: 2 people answered', $html );
+		$past = substr( $html, (int) strpos( $html, 'id="poller-round-1"' ) );
+		$this->assertStringContainsString( '<td>Hope</td><td>2</td>', $past );
+		$this->assertMatchesRegularExpression( '#<tr class="poller-word-hidden"><td>Rude <em>\(hidden\)</em></td><td>1</td>#', $past );
 	}
 
 	public function test_handle_reset_falls_back_to_the_list() {

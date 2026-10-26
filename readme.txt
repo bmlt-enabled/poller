@@ -28,6 +28,7 @@ Votes are anonymous. The plugin stores a salted hash of a random browser token a
 == Changelog ==
 
 = 0.4.0 =
+* Reset votes starts a new round on the same poll instead of deleting answers. The code, QR code and choices stay, the live tally starts empty, and earlier rounds' results are listed under Past rounds on the poll's edit screen.
 * Duplicate a poll from the poll list. The copy keeps the question, picture, voting rules and choices, gets a new code, and starts closed with no votes, so you can tweak it and run it again.
 
 = 0.3.0 =
