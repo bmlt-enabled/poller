@@ -31,6 +31,7 @@ class Admin {
 		add_action( 'admin_post_poller_delete_poll', [ $this, 'handle_delete' ] );
 		add_action( 'admin_post_poller_set_status', [ $this, 'handle_status' ] );
 		add_action( 'admin_post_poller_duplicate_poll', [ $this, 'handle_duplicate' ] );
+		add_action( 'admin_post_poller_reset_poll', [ $this, 'handle_reset' ] );
 		add_action( 'admin_post_poller_hide_word', [ $this, 'handle_hide_word' ] );
 	}
 
@@ -190,6 +191,26 @@ class Admin {
 	}
 
 	/**
+	 * Clear every answer on a poll but keep the poll. Posted from the poll
+	 * list or the edit screen, and goes back to the page it came from.
+	 */
+	public function handle_reset(): void {
+		$id = absint( $_POST['poll_id'] ?? 0 );
+		check_admin_referer( 'poller_reset_poll_' . $id );
+		$this->guard();
+		if ( ! $this->repo->reset_poll( $id ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=poller' ) );
+			exit;
+		}
+		$back = wp_get_referer();
+		if ( ! $back ) {
+			$back = admin_url( 'admin.php?page=poller' );
+		}
+		wp_safe_redirect( add_query_arg( 'poller_notice', 'reset', remove_query_arg( 'poller_notice', $back ) ) );
+		exit;
+	}
+
+	/**
 	 * Hide a word cloud entry, or show it again. Posted from the poll's edit
 	 * screen or from the results on the public poll page.
 	 */
@@ -265,6 +286,10 @@ class Admin {
 												<input type="hidden" name="poll_id" value="<?php echo esc_attr( (string) $poll['id'] ); ?>">
 												<button type="submit" class="button-link"><?php esc_html_e( 'Duplicate', 'poller' ); ?></button>
 											</form>
+											|
+										</span>
+										<span>
+											<?php $this->reset_form( (int) $poll['id'] ); ?>
 											|
 										</span>
 										<span>
@@ -393,6 +418,7 @@ class Admin {
 							<?php if ( $locked && 'words' === $poll['selection'] ) : ?>
 								<p><?php echo esc_html( ucfirst( $this->selection_label( $poll ) ) ); ?></p>
 								<p class="description"><?php esc_html_e( 'People have already answered, so the voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller' ); ?></p>
+								<p><?php $this->reset_button( __( 'Reset votes to change the rules', 'poller' ) ); ?></p>
 							<?php elseif ( $locked ) : ?>
 								<p><?php echo esc_html( 'image' === $input['kind'] ? __( 'Picture choices', 'poller' ) : __( 'Text choices', 'poller' ) ); ?>,
 									<?php echo esc_html( $this->selection_label( $poll ) ); ?></p>
@@ -408,6 +434,7 @@ class Admin {
 									<?php endforeach; ?>
 								</ul>
 								<p class="description"><?php esc_html_e( 'People have already voted, so the choices and voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller' ); ?></p>
+								<p><?php $this->reset_button( __( 'Reset votes to change the rules', 'poller' ) ); ?></p>
 							<?php else : ?>
 								<fieldset id="poller-kind">
 									<legend class="screen-reader-text"><?php esc_html_e( 'Choice type', 'poller' ); ?></legend>
@@ -499,12 +526,39 @@ class Admin {
 				</table>
 				<?php submit_button( $poll ? __( 'Save poll', 'poller' ) : __( 'Create poll', 'poller' ) ); ?>
 			</form>
+			<?php
+			if ( $locked ) {
+				// Forms cannot nest, so the reset button inside the poll form submits this one.
+				$this->reset_form( (int) $poll['id'], 'poller-reset-form' );
+			}
+			?>
 			<?php if ( $poll && 'words' === $poll['selection'] ) : ?>
 				<h2 id="poller-words"><?php esc_html_e( 'Words', 'poller' ); ?></h2>
 				<?php $this->render_words( $poll ); ?>
 			<?php endif; ?>
 		</div>
 		<?php
+	}
+
+	/**
+	 * The Reset votes form. With an id, the form has no button of its own
+	 * and reset_button() submits it from elsewhere on the page.
+	 */
+	private function reset_form( int $poll_id, string $id = '' ): void {
+		?>
+		<form class="poller-inline-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" data-poller-confirm="<?php echo esc_attr__( 'Clear every answer on this poll? The poll, its code and its choices stay.', 'poller' ); ?>"<?php echo '' !== $id ? ' id="' . esc_attr( $id ) . '"' : ''; ?>>
+			<?php wp_nonce_field( 'poller_reset_poll_' . $poll_id ); ?>
+			<input type="hidden" name="action" value="poller_reset_poll">
+			<input type="hidden" name="poll_id" value="<?php echo esc_attr( (string) $poll_id ); ?>">
+			<?php if ( '' === $id ) : ?>
+				<button type="submit" class="button-link-delete"><?php esc_html_e( 'Reset votes', 'poller' ); ?></button>
+			<?php endif; ?>
+		</form>
+		<?php
+	}
+
+	private function reset_button( string $label ): void {
+		echo '<button type="submit" class="button-link" form="poller-reset-form">' . esc_html( $label ) . '</button>';
 	}
 
 	private function guard(): void {
@@ -525,6 +579,7 @@ class Admin {
 			'closed' => __( 'Poll closed.', 'poller' ),
 			'opened' => __( 'Poll opened.', 'poller' ),
 			'duplicated' => __( 'Poll duplicated.', 'poller' ),
+			'reset' => __( 'Votes reset. The poll is empty again.', 'poller' ),
 			'not_duplicated' => __( 'That poll could not be duplicated. Try again.', 'poller' ),
 			'kept' => __( 'People voted while you were editing, so the choices were kept.', 'poller' ),
 			'hidden' => __( 'Word hidden.', 'poller' ),

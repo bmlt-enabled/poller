@@ -225,6 +225,54 @@ class Repository {
 	}
 
 	/**
+	 * Clear every answer on a poll: its ballots, votes, words and hidden
+	 * words. The poll row and its choices are kept, and the status is left
+	 * as it is. Holds the poll row lock that cast() and save_poll() take, so
+	 * a vote arriving mid-reset waits and lands on the empty poll.
+	 *
+	 * Bumps the revision so open room displays and voter pages refresh.
+	 * Returns false if the poll does not exist.
+	 */
+	public function reset_poll( int $id ): bool {
+		global $wpdb;
+
+		$wpdb->query( 'START TRANSACTION' );
+		$found = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT id FROM %i WHERE id = %d FOR UPDATE',
+				$this->table( 'polls' ),
+				$id
+			)
+		);
+		if ( null === $found ) {
+			$wpdb->query( 'ROLLBACK' );
+			return false;
+		}
+
+		$wpdb->query(
+			$wpdb->prepare(
+				'DELETE v FROM %i v INNER JOIN %i b ON b.id = v.ballot_id WHERE b.poll_id = %d',
+				$this->table( 'votes' ),
+				$this->table( 'ballots' ),
+				$id
+			)
+		);
+		$wpdb->query(
+			$wpdb->prepare(
+				'DELETE w FROM %i w INNER JOIN %i b ON b.id = w.ballot_id WHERE b.poll_id = %d',
+				$this->table( 'words' ),
+				$this->table( 'ballots' ),
+				$id
+			)
+		);
+		$wpdb->delete( $this->table( 'hidden_words' ), [ 'poll_id' => $id ], [ '%d' ] );
+		$wpdb->delete( $this->table( 'ballots' ), [ 'poll_id' => $id ], [ '%d' ] );
+		$this->touch( $id );
+		$wpdb->query( 'COMMIT' );
+		return true;
+	}
+
+	/**
 	 * Copy a poll's setup and choices into a new, closed poll with its own
 	 * code. Ballots, votes, words and hidden words are not copied.
 	 *
