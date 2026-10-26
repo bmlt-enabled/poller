@@ -25,15 +25,17 @@ class Presenter {
 	 */
 	public function payload( array $poll, ?string $voter_hash ): array {
 		$poll_id = (int) $poll['id'];
+		// Results come from the round this poll row is on, so they match its revision.
+		$round = (int) ( $poll['round'] ?? 1 );
 		$choices = $this->repo->get_choices( $poll_id );
-		$counts = $this->repo->choice_counts( $poll_id );
+		$counts = $this->repo->choice_counts( $poll_id, $round );
 		$mine = [];
 		$selection = (string) $poll['selection'];
 		$dots = 'dots' === $selection;
 		$cloud = 'words' === $selection;
 
 		if ( $voter_hash ) {
-			$ballot = $this->repo->get_ballot( $poll_id, $voter_hash );
+			$ballot = $this->repo->get_ballot( $poll_id, $voter_hash, $round );
 			if ( $ballot ) {
 				$mine = $cloud
 					? $this->repo->ballot_words( (int) $ballot['id'] )
@@ -43,7 +45,7 @@ class Presenter {
 
 		// Only the aggregated words go out: text and how many ballots, never whose.
 		$words = $cloud
-			? Tally::words( $this->repo->word_rows( $poll_id ), $this->repo->hidden_words( $poll_id ) )
+			? Tally::words( $this->repo->word_rows( $poll_id, $round ), $this->repo->hidden_words( $poll_id, $round ) )
 			: [];
 
 		$kind = (string) $poll['kind'];
@@ -82,7 +84,7 @@ class Presenter {
 			'spend_all' => $dots && ! empty( $poll['spend_all'] ),
 			'status' => (string) $poll['status'],
 			'revision' => (int) $poll['revision'],
-			'ballots' => $this->repo->ballot_count( $poll_id ),
+			'ballots' => $this->repo->ballot_count( $poll_id, $round ),
 			'dots' => $dots ? array_sum( $counts ) : 0,
 			'image' => $this->image( (int) $poll['image_id'], 'large' ),
 			// Dot polls send choice id => dots, word clouds this voter's entries,

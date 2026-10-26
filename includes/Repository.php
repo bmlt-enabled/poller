@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Repository {
 
-	public const DB_VERSION = '3';
+	public const DB_VERSION = '4';
 	public const VERSION_OPTION = 'poller_db_version';
 
 	public function install(): void {
@@ -49,6 +49,7 @@ class Repository {
             spend_all tinyint(1) unsigned NOT NULL DEFAULT 0,
             status varchar(16) NOT NULL DEFAULT 'open',
             revision bigint(20) unsigned NOT NULL DEFAULT 0,
+            round int unsigned NOT NULL DEFAULT 1,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
             PRIMARY KEY  (id),
@@ -63,6 +64,8 @@ class Repository {
             label varchar(160) NOT NULL DEFAULT '',
             image_id bigint(20) unsigned NOT NULL DEFAULT 0,
             position smallint unsigned NOT NULL DEFAULT 0,
+            first_round int unsigned NOT NULL DEFAULT 1,
+            last_round int unsigned NOT NULL DEFAULT 0,
             PRIMARY KEY  (id),
             KEY poll_id (poll_id)
         ) {$charset};"
@@ -72,13 +75,21 @@ class Repository {
 			"CREATE TABLE {$ballots} (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             poll_id bigint(20) unsigned NOT NULL,
+            round int unsigned NOT NULL DEFAULT 1,
             voter_token char(64) NOT NULL,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
             PRIMARY KEY  (id),
-            UNIQUE KEY poll_voter (poll_id, voter_token)
+            UNIQUE KEY poll_round_voter (poll_id, round, voter_token)
         ) {$charset};"
 		);
+
+		// Before rounds, a browser had one ballot per poll. dbDelta adds the
+		// new key above but never drops an index, so drop the old one here.
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW INDEX FROM %i WHERE Key_name = %s', $ballots, 'poll_voter' ) ) ) {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.SchemaChange -- Upgrade from the one-ballot-per-poll key.
+			$wpdb->query( $wpdb->prepare( 'ALTER TABLE %i DROP INDEX poll_voter', $ballots ) );
+		}
 
 		dbDelta(
 			"CREATE TABLE {$votes} (
@@ -109,6 +120,7 @@ class Repository {
 			"CREATE TABLE {$hidden} (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             poll_id bigint(20) unsigned NOT NULL,
+            round int unsigned NOT NULL DEFAULT 1,
             normalized varchar(64) NOT NULL DEFAULT '',
             PRIMARY KEY  (id),
             KEY poll_id (poll_id)
@@ -225,56 +237,74 @@ class Repository {
 	}
 
 	/**
-	 * Clear every answer on a poll: its ballots, votes, words and hidden
-	 * words. The poll row and its choices are kept, and the status is left
-	 * as it is. Holds the poll row lock that cast() and save_poll() take, so
-	 * a vote arriving mid-reset waits and lands on the empty poll.
+	 * Start a new round on a poll. Nothing is deleted: the ballots, votes,
+	 * words and hidden words of earlier rounds stay stored, and every
+	 * current-results query reads only the poll's current round, so the
+	 * live tally starts empty. The code, choices, rules and status are kept.
 	 *
-	 * Bumps the revision so open room displays and voter pages refresh.
-	 * Returns false if the poll does not exist.
+	 * One UPDATE on the poll row, which takes the row lock cast() and
+	 * save_poll() take, so a vote arriving mid-reset waits and lands in the
+	 * new round. Bumps the revision so open room displays and voter pages
+	 * refresh. Returns false if the poll does not exist.
 	 */
 	public function reset_poll( int $id ): bool {
 		global $wpdb;
 
-		$wpdb->query( 'START TRANSACTION' );
-		$found = $wpdb->get_var(
+		$updated = $wpdb->query(
 			$wpdb->prepare(
-				'SELECT id FROM %i WHERE id = %d FOR UPDATE',
+				'UPDATE %i SET round = round + 1, revision = revision + 1, updated_at = %s WHERE id = %d',
 				$this->table( 'polls' ),
+				$this->now(),
 				$id
 			)
 		);
-		if ( null === $found ) {
-			$wpdb->query( 'ROLLBACK' );
-			return false;
-		}
+		return (int) $updated > 0;
+	}
 
-		$wpdb->query(
+	/**
+	 * Earlier rounds that got answers, newest first. Rounds nobody answered
+	 * are left out, since there is nothing to show for them.
+	 *
+	 * @return array<int, array{round: int, ballots: int, first_at: string, last_at: string}>
+	 */
+	public function past_rounds( int $poll_id ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'DELETE v FROM %i v INNER JOIN %i b ON b.id = v.ballot_id WHERE b.poll_id = %d',
-				$this->table( 'votes' ),
+				'SELECT b.round, COUNT(*) AS ballots, MIN(b.created_at) AS first_at, MAX(b.updated_at) AS last_at
+            FROM %i b
+            INNER JOIN %i p ON p.id = b.poll_id
+            WHERE b.poll_id = %d AND b.round < p.round
+            GROUP BY b.round
+            ORDER BY b.round DESC',
 				$this->table( 'ballots' ),
-				$id
-			)
+				$this->table( 'polls' ),
+				$poll_id
+			),
+			ARRAY_A
 		);
-		$wpdb->query(
-			$wpdb->prepare(
-				'DELETE w FROM %i w INNER JOIN %i b ON b.id = w.ballot_id WHERE b.poll_id = %d',
-				$this->table( 'words' ),
-				$this->table( 'ballots' ),
-				$id
-			)
+
+		if ( ! is_array( $rows ) ) {
+			return [];
+		}
+		return array_map(
+			static function ( $row ) {
+				return [
+					'round' => (int) $row['round'],
+					'ballots' => (int) $row['ballots'],
+					'first_at' => (string) $row['first_at'],
+					'last_at' => (string) $row['last_at'],
+				];
+			},
+			$rows
 		);
-		$wpdb->delete( $this->table( 'hidden_words' ), [ 'poll_id' => $id ], [ '%d' ] );
-		$wpdb->delete( $this->table( 'ballots' ), [ 'poll_id' => $id ], [ '%d' ] );
-		$this->touch( $id );
-		$wpdb->query( 'COMMIT' );
-		return true;
 	}
 
 	/**
 	 * Copy a poll's setup and choices into a new, closed poll with its own
-	 * code. Ballots, votes, words and hidden words are not copied.
+	 * code, starting at round 1. Ballots, votes, words and hidden words of
+	 * every round are not copied, and neither are retired choices.
 	 *
 	 * Returns the new poll's id, or null if the poll does not exist or the
 	 * copy could not be saved.
@@ -369,7 +399,7 @@ class Repository {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT p.*, (SELECT COUNT(*) FROM %i b WHERE b.poll_id = p.id) AS ballots
+				'SELECT p.*, (SELECT COUNT(*) FROM %i b WHERE b.poll_id = p.id AND b.round = p.round) AS ballots
             FROM %i p
             ORDER BY p.created_at DESC',
 				$this->table( 'ballots' ),
@@ -400,21 +430,23 @@ class Repository {
 	 * @param array<int, array{label: string, image_id: int}> $choices
 	 */
 	public function replace_choices( int $poll_id, array $choices ): bool {
-		if ( $this->ballot_count( $poll_id ) > 0 ) {
+		$round = $this->current_round( $poll_id );
+		if ( $this->ballot_count( $poll_id, $round ) > 0 ) {
 			return false;
 		}
 
-		$this->write_choices( $poll_id, $choices );
+		$this->write_choices( $poll_id, $round, $choices );
 		$this->touch( $poll_id );
 		return true;
 	}
 
 	/**
-	 * Update a poll, and its choices when nobody has voted yet. The poll row
+	 * Update a poll, and its choices when nobody has voted yet in the current
+	 * round. The poll row
 	 * stays locked for the whole save, the same lock cast() takes, so a vote
 	 * sees either the old choices and rules or the new ones, never a mix.
 	 *
-	 * Returns false when there are ballots. Then the choices and voting rules
+	 * Returns false when the current round has ballots. Then the choices and voting rules
 	 * already stored are kept, and only the other fields are saved.
 	 *
 	 * @param array<string, mixed> $fields
@@ -426,7 +458,7 @@ class Repository {
 		$wpdb->query( 'START TRANSACTION' );
 		$rules = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT kind, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
+				'SELECT kind, selection, budget, per_choice, spend_all, round FROM %i WHERE id = %d FOR UPDATE',
 				$this->table( 'polls' ),
 				$id
 			),
@@ -437,9 +469,10 @@ class Repository {
 			return false;
 		}
 
-		$open = $this->ballot_count( $id ) === 0;
+		$round = max( 1, (int) $rules['round'] );
+		$open = $this->ballot_count( $id, $round ) === 0;
 		if ( $open && null !== $choices ) {
-			$this->write_choices( $id, $choices );
+			$this->write_choices( $id, $round, $choices );
 		} elseif ( ! $open ) {
 			$fields = [
 				'kind' => (string) $rules['kind'],
@@ -455,12 +488,33 @@ class Repository {
 	}
 
 	/**
+	 * Replace the live choices. Only called while the current round has no
+	 * ballots. Choices added in this round are deleted. Choices from an
+	 * earlier round are retired instead, so that round's results still show
+	 * the choices people voted on.
+	 *
 	 * @param array<int, array{label: string, image_id: int}> $choices
 	 */
-	private function write_choices( int $poll_id, array $choices ): void {
+	private function write_choices( int $poll_id, int $round, array $choices ): void {
 		global $wpdb;
 
-		$wpdb->delete( $this->table( 'choices' ), [ 'poll_id' => $poll_id ], [ '%d' ] );
+		$table = $this->table( 'choices' );
+		$wpdb->query(
+			$wpdb->prepare(
+				'DELETE FROM %i WHERE poll_id = %d AND last_round = 0 AND first_round >= %d',
+				$table,
+				$poll_id,
+				$round
+			)
+		);
+		$wpdb->query(
+			$wpdb->prepare(
+				'UPDATE %i SET last_round = %d WHERE poll_id = %d AND last_round = 0',
+				$table,
+				$round - 1,
+				$poll_id
+			)
+		);
 		$position = 0;
 		foreach ( $choices as $choice ) {
 			$wpdb->insert(
@@ -470,14 +524,17 @@ class Repository {
 					'label' => $choice['label'],
 					'image_id' => $choice['image_id'],
 					'position' => $position,
+					'first_round' => $round,
 				],
-				[ '%d', '%s', '%d', '%d' ]
+				[ '%d', '%s', '%d', '%d', '%d' ]
 			);
 			$position++;
 		}
 	}
 
 	/**
+	 * The choices people vote on now.
+	 *
 	 * @return array<int, array<string, mixed>>
 	 */
 	public function get_choices( int $poll_id ): array {
@@ -485,13 +542,45 @@ class Repository {
 
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT * FROM %i WHERE poll_id = %d ORDER BY position ASC, id ASC',
+				'SELECT * FROM %i WHERE poll_id = %d AND last_round = 0 ORDER BY position ASC, id ASC',
 				$this->table( 'choices' ),
 				$poll_id
 			),
 			ARRAY_A
 		);
 
+		return self::hydrate_choices( $rows );
+	}
+
+	/**
+	 * The choices a given round was voted on, including ones retired since.
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function round_choices( int $poll_id, int $round ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM %i
+            WHERE poll_id = %d AND first_round <= %d AND ( last_round = 0 OR last_round >= %d )
+            ORDER BY position ASC, id ASC',
+				$this->table( 'choices' ),
+				$poll_id,
+				$round,
+				$round
+			),
+			ARRAY_A
+		);
+
+		return self::hydrate_choices( $rows );
+	}
+
+	/**
+	 * @param mixed $rows
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function hydrate_choices( $rows ): array {
 		if ( ! is_array( $rows ) ) {
 			return [];
 		}
@@ -510,22 +599,43 @@ class Repository {
 		);
 	}
 
-	public function ballot_count( int $poll_id ): int {
+	/**
+	 * The poll's current round, or 1 for a poll that does not exist.
+	 */
+	public function current_round( int $poll_id ): int {
+		global $wpdb;
+
+		$round = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT round FROM %i WHERE id = %d',
+				$this->table( 'polls' ),
+				$poll_id
+			)
+		);
+		return max( 1, (int) $round );
+	}
+
+	/**
+	 * @param int|null $round null reads the poll's current round.
+	 */
+	public function ballot_count( int $poll_id, ?int $round = null ): int {
 		global $wpdb;
 
 		return (int) $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT COUNT(*) FROM %i WHERE poll_id = %d',
+				'SELECT COUNT(*) FROM %i WHERE poll_id = %d AND round = %d',
 				$this->table( 'ballots' ),
-				$poll_id
+				$poll_id,
+				$round ?? $this->current_round( $poll_id )
 			)
 		);
 	}
 
 	/**
+	 * @param int|null $round null reads the poll's current round.
 	 * @return array<int, int> choice id => votes, or dots on a dot voting poll
 	 */
-	public function choice_counts( int $poll_id ): array {
+	public function choice_counts( int $poll_id, ?int $round = null ): array {
 		global $wpdb;
 
 		$rows = $wpdb->get_results(
@@ -533,11 +643,12 @@ class Repository {
 				'SELECT v.choice_id, SUM(v.weight) AS votes
             FROM %i v
             INNER JOIN %i b ON b.id = v.ballot_id
-            WHERE b.poll_id = %d
+            WHERE b.poll_id = %d AND b.round = %d
             GROUP BY v.choice_id',
 				$this->table( 'votes' ),
 				$this->table( 'ballots' ),
-				$poll_id
+				$poll_id,
+				$round ?? $this->current_round( $poll_id )
 			),
 			ARRAY_A
 		);
@@ -552,14 +663,21 @@ class Repository {
 		return $counts;
 	}
 
-	public function get_ballot( int $poll_id, string $voter_token ): ?array {
+	/**
+	 * This browser's ballot in a round. A ballot from an earlier round is
+	 * not returned, so after a reset the voter sees an unanswered poll.
+	 *
+	 * @param int|null $round null reads the poll's current round.
+	 */
+	public function get_ballot( int $poll_id, string $voter_token, ?int $round = null ): ?array {
 		global $wpdb;
 
 		$row = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT * FROM %i WHERE poll_id = %d AND voter_token = %s',
+				'SELECT * FROM %i WHERE poll_id = %d AND round = %d AND voter_token = %s',
 				$this->table( 'ballots' ),
 				$poll_id,
+				$round ?? $this->current_round( $poll_id ),
 				$voter_token
 			),
 			ARRAY_A
@@ -572,6 +690,7 @@ class Repository {
 		return [
 			'id' => (int) $row['id'],
 			'poll_id' => (int) $row['poll_id'],
+			'round' => (int) $row['round'],
 			'voter_token' => (string) $row['voter_token'],
 		];
 	}
@@ -624,9 +743,10 @@ class Repository {
 	 * ballot. Not grouped in SQL: the column collation could merge "Hope" with
 	 * "hope", and Tally needs each spelling to pick the one to show.
 	 *
+	 * @param int|null $round null reads the poll's current round.
 	 * @return array<int, array{key: string, text: string, count: int}>
 	 */
-	public function word_rows( int $poll_id ): array {
+	public function word_rows( int $poll_id, ?int $round = null ): array {
 		global $wpdb;
 
 		$rows = $wpdb->get_results(
@@ -634,10 +754,11 @@ class Repository {
 				'SELECT w.normalized, w.word
             FROM %i w
             INNER JOIN %i b ON b.id = w.ballot_id
-            WHERE b.poll_id = %d',
+            WHERE b.poll_id = %d AND b.round = %d',
 				$this->table( 'words' ),
 				$this->table( 'ballots' ),
-				$poll_id
+				$poll_id,
+				$round ?? $this->current_round( $poll_id )
 			),
 			ARRAY_A
 		);
@@ -658,34 +779,38 @@ class Repository {
 	}
 
 	/**
-	 * @return array<int, string> keys an admin hid from this poll's cloud
+	 * @param int|null $round null reads the poll's current round.
+	 * @return array<int, string> keys an admin hid from this poll's cloud in that round
 	 */
-	public function hidden_words( int $poll_id ): array {
+	public function hidden_words( int $poll_id, ?int $round = null ): array {
 		global $wpdb;
 
 		$rows = $wpdb->get_col(
 			$wpdb->prepare(
-				'SELECT normalized FROM %i WHERE poll_id = %d ORDER BY normalized ASC',
+				'SELECT normalized FROM %i WHERE poll_id = %d AND round = %d ORDER BY normalized ASC',
 				$this->table( 'hidden_words' ),
-				$poll_id
+				$poll_id,
+				$round ?? $this->current_round( $poll_id )
 			)
 		);
 		return is_array( $rows ) ? array_map( 'strval', $rows ) : [];
 	}
 
 	/**
-	 * Hide a word from the cloud, or show it again. Bumps the revision so
-	 * open pages pick it up on their next refresh.
+	 * Hide a word from the current round's cloud, or show it again. Bumps the
+	 * revision so open pages pick it up on their next refresh.
 	 */
 	public function set_word_hidden( int $poll_id, string $key, bool $hidden ): void {
 		global $wpdb;
 
 		$table = $this->table( 'hidden_words' );
+		$round = $this->current_round( $poll_id );
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, normalized FROM %i WHERE poll_id = %d',
+				'SELECT id, normalized FROM %i WHERE poll_id = %d AND round = %d',
 				$table,
-				$poll_id
+				$poll_id,
+				$round
 			),
 			ARRAY_A
 		);
@@ -701,9 +826,10 @@ class Repository {
 				$table,
 				[
 					'poll_id' => $poll_id,
+					'round' => $round,
 					'normalized' => $key,
 				],
-				[ '%d', '%s' ]
+				[ '%d', '%d', '%s' ]
 			);
 		} elseif ( ! $hidden ) {
 			foreach ( $found as $id ) {
@@ -732,7 +858,7 @@ class Repository {
 
 		$poll = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT id, status, selection, budget FROM %i WHERE id = %d FOR UPDATE',
+				'SELECT id, status, selection, budget, round FROM %i WHERE id = %d FOR UPDATE',
 				$polls,
 				$poll_id
 			)
@@ -748,7 +874,7 @@ class Repository {
 			throw new \RuntimeException( 'invalid' );
 		}
 
-		$ballot_id = $this->upsert_ballot( $poll_id, $voter_token, $now );
+		$ballot_id = $this->upsert_ballot( $poll_id, (int) $poll->round, $voter_token, $now );
 		$wpdb->delete( $table, [ 'ballot_id' => $ballot_id ], [ '%d' ] );
 		foreach ( $words as $word ) {
 			$ok = $wpdb->insert(
@@ -778,18 +904,20 @@ class Repository {
 	}
 
 	/**
-	 * Find or add this browser's ballot inside a cast transaction. Rolls back
+	 * Find or add this browser's ballot for the round inside a cast
+	 * transaction. The round comes from the locked poll row. Rolls back
 	 * and throws RuntimeException('invalid') when there is no row to use.
 	 */
-	private function upsert_ballot( int $poll_id, string $voter_token, string $now ): int {
+	private function upsert_ballot( int $poll_id, int $round, string $voter_token, string $now ): int {
 		global $wpdb;
 
 		$ballots = $this->table( 'ballots' );
 		$ballot_id = (int) $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT id FROM %i WHERE poll_id = %d AND voter_token = %s LIMIT 1 FOR UPDATE',
+				'SELECT id FROM %i WHERE poll_id = %d AND round = %d AND voter_token = %s LIMIT 1 FOR UPDATE',
 				$ballots,
 				$poll_id,
+				$round,
 				$voter_token
 			)
 		);
@@ -799,18 +927,20 @@ class Repository {
 				$ballots,
 				[
 					'poll_id' => $poll_id,
+					'round' => $round,
 					'voter_token' => $voter_token,
 					'created_at' => $now,
 					'updated_at' => $now,
 				],
-				[ '%d', '%s', '%s', '%s' ]
+				[ '%d', '%d', '%s', '%s', '%s' ]
 			);
 			if ( ! $inserted ) {
 				$ballot_id = (int) $wpdb->get_var(
 					$wpdb->prepare(
-						'SELECT id FROM %i WHERE poll_id = %d AND voter_token = %s LIMIT 1',
+						'SELECT id FROM %i WHERE poll_id = %d AND round = %d AND voter_token = %s LIMIT 1',
 						$ballots,
 						$poll_id,
+						$round,
 						$voter_token
 					)
 				);
@@ -854,7 +984,7 @@ class Repository {
 
 		$poll = $wpdb->get_row(
 			$wpdb->prepare(
-				'SELECT id, status, selection, budget, per_choice, spend_all FROM %i WHERE id = %d FOR UPDATE',
+				'SELECT id, status, selection, budget, per_choice, spend_all, round FROM %i WHERE id = %d FOR UPDATE',
 				$polls,
 				$poll_id
 			)
@@ -877,7 +1007,7 @@ class Repository {
         // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, PluginCheck.Security.DirectDB.UnescapedDBParameter
 		$found = $wpdb->get_col(
 			$wpdb->prepare(
-				"SELECT id FROM %i WHERE poll_id = %d AND id IN ({$placeholders})",
+				"SELECT id FROM %i WHERE poll_id = %d AND last_round = 0 AND id IN ({$placeholders})",
 				...array_merge( [ $choices, $poll_id ], $choice_ids )
 			)
 		);
@@ -891,7 +1021,7 @@ class Repository {
 			throw new \RuntimeException( 'invalid' );
 		}
 
-		$ballot_id = $this->upsert_ballot( $poll_id, $voter_token, $now );
+		$ballot_id = $this->upsert_ballot( $poll_id, (int) $poll->round, $voter_token, $now );
 
 		$wpdb->delete( $votes, [ 'ballot_id' => $ballot_id ], [ '%d' ] );
 		foreach ( $expected as $choice_id ) {
@@ -958,6 +1088,7 @@ class Repository {
 			'spend_all' => ! empty( $row['spend_all'] ),
 			'status' => (string) $row['status'],
 			'revision' => (int) $row['revision'],
+			'round' => max( 1, (int) ( $row['round'] ?? 1 ) ),
 			'created_at' => (string) $row['created_at'],
 			'updated_at' => (string) $row['updated_at'],
 			'ballots' => isset( $row['ballots'] ) ? (int) $row['ballots'] : null,

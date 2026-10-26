@@ -191,8 +191,9 @@ class Admin {
 	}
 
 	/**
-	 * Clear every answer on a poll but keep the poll. Posted from the poll
-	 * list or the edit screen, and goes back to the page it came from.
+	 * Start a new round on a poll. The live tally starts empty and earlier
+	 * rounds stay under Past rounds. Posted from the poll list or the edit
+	 * screen, and goes back to the page it came from.
 	 */
 	public function handle_reset(): void {
 		$id = absint( $_POST['poll_id'] ?? 0 );
@@ -417,7 +418,7 @@ class Admin {
 						<td>
 							<?php if ( $locked && 'words' === $poll['selection'] ) : ?>
 								<p><?php echo esc_html( ucfirst( $this->selection_label( $poll ) ) ); ?></p>
-								<p class="description"><?php esc_html_e( 'People have already answered, so the voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller' ); ?></p>
+								<p class="description"><?php esc_html_e( 'People have already answered in this round, so the voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller' ); ?></p>
 								<p><?php $this->reset_button( __( 'Reset votes to change the rules', 'poller' ) ); ?></p>
 							<?php elseif ( $locked ) : ?>
 								<p><?php echo esc_html( 'image' === $input['kind'] ? __( 'Picture choices', 'poller' ) : __( 'Text choices', 'poller' ) ); ?>,
@@ -433,7 +434,7 @@ class Admin {
 										</li>
 									<?php endforeach; ?>
 								</ul>
-								<p class="description"><?php esc_html_e( 'People have already voted, so the choices and voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller' ); ?></p>
+								<p class="description"><?php esc_html_e( 'People have already voted in this round, so the choices and voting rules stay as they are. You can still edit the question, the picture, and whether the poll is open.', 'poller' ); ?></p>
 								<p><?php $this->reset_button( __( 'Reset votes to change the rules', 'poller' ) ); ?></p>
 							<?php else : ?>
 								<fieldset id="poller-kind">
@@ -536,6 +537,11 @@ class Admin {
 				<h2 id="poller-words"><?php esc_html_e( 'Words', 'poller' ); ?></h2>
 				<?php $this->render_words( $poll ); ?>
 			<?php endif; ?>
+			<?php
+			if ( $poll ) {
+				$this->render_past_rounds( $poll );
+			}
+			?>
 		</div>
 		<?php
 	}
@@ -546,12 +552,12 @@ class Admin {
 	 */
 	private function reset_form( int $poll_id, string $id = '' ): void {
 		?>
-		<form class="poller-inline-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" data-poller-confirm="<?php echo esc_attr__( 'Clear every answer on this poll? The poll, its code and its choices stay.', 'poller' ); ?>"<?php echo '' !== $id ? ' id="' . esc_attr( $id ) . '"' : ''; ?>>
+		<form class="poller-inline-form" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" data-poller-confirm="<?php echo esc_attr__( 'Start a new round? Earlier results are kept.', 'poller' ); ?>"<?php echo '' !== $id ? ' id="' . esc_attr( $id ) . '"' : ''; ?>>
 			<?php wp_nonce_field( 'poller_reset_poll_' . $poll_id ); ?>
 			<input type="hidden" name="action" value="poller_reset_poll">
 			<input type="hidden" name="poll_id" value="<?php echo esc_attr( (string) $poll_id ); ?>">
 			<?php if ( '' === $id ) : ?>
-				<button type="submit" class="button-link-delete"><?php esc_html_e( 'Reset votes', 'poller' ); ?></button>
+				<button type="submit" class="button-link"><?php esc_html_e( 'Reset votes', 'poller' ); ?></button>
 			<?php endif; ?>
 		</form>
 		<?php
@@ -579,7 +585,7 @@ class Admin {
 			'closed' => __( 'Poll closed.', 'poller' ),
 			'opened' => __( 'Poll opened.', 'poller' ),
 			'duplicated' => __( 'Poll duplicated.', 'poller' ),
-			'reset' => __( 'Votes reset. The poll is empty again.', 'poller' ),
+			'reset' => __( 'New round started. Earlier results are kept under Past rounds on the poll.', 'poller' ),
 			'not_duplicated' => __( 'That poll could not be duplicated. Try again.', 'poller' ),
 			'kept' => __( 'People voted while you were editing, so the choices were kept.', 'poller' ),
 			'hidden' => __( 'Word hidden.', 'poller' ),
@@ -968,6 +974,88 @@ class Admin {
 			</td>
 		</tr>
 		<?php
+	}
+
+	/**
+	 * Earlier rounds' results, one collapsed block per round that got answers.
+	 * Read only: hiding words works on the current round.
+	 *
+	 * @param array<string, mixed> $poll
+	 */
+	private function render_past_rounds( array $poll ): void {
+		$id = (int) $poll['id'];
+		$rounds = $this->repo->past_rounds( $id );
+		if ( ! $rounds ) {
+			return;
+		}
+		echo '<h2 id="poller-rounds">' . esc_html__( 'Past rounds', 'poller' ) . '</h2>';
+		echo '<p class="description">' . esc_html__( 'Reset votes starts a new round. The answers from earlier rounds are kept here.', 'poller' ) . '</p>';
+		foreach ( $rounds as $round ) {
+			$number = (int) $round['round'];
+			$summary = sprintf(
+				/* translators: 1: round number, 2: how many people answered, 3: first answer time, 4: last answer time. */
+				_n( 'Round %1$d: %2$d person answered, %3$s to %4$s', 'Round %1$d: %2$d people answered, %3$s to %4$s', (int) $round['ballots'], 'poller' ),
+				$number,
+				(int) $round['ballots'],
+				$this->local_time( $round['first_at'] ),
+				$this->local_time( $round['last_at'] )
+			);
+			echo '<details class="poller-admin-round" id="' . esc_attr( 'poller-round-' . $number ) . '"><summary>' . esc_html( $summary ) . '</summary>';
+			$this->render_round_results( $id, $number );
+			echo '</details>';
+		}
+	}
+
+	/**
+	 * One round's results. The voting rules can change between rounds, so a
+	 * round with words reads as a word list and any other as choice totals.
+	 */
+	private function render_round_results( int $poll_id, int $round ): void {
+		$rows = $this->repo->word_rows( $poll_id, $round );
+		if ( $rows ) {
+			$is_hidden = array_fill_keys( $this->repo->hidden_words( $poll_id, $round ), true );
+			echo '<table class="widefat striped poller-admin-words"><thead><tr><th>' . esc_html__( 'Word', 'poller' ) . '</th><th>' . esc_html__( 'People', 'poller' ) . '</th></tr></thead><tbody>';
+			foreach ( Tally::words( $rows, [], 0 ) as $word ) {
+				$hidden = isset( $is_hidden[ $word['key'] ] );
+				echo '<tr' . ( $hidden ? ' class="poller-word-hidden"' : '' ) . '><td>' . esc_html( $word['text'] );
+				if ( $hidden ) {
+					echo ' <em>' . esc_html__( '(hidden)', 'poller' ) . '</em>';
+				}
+				echo '</td><td>' . esc_html( (string) $word['count'] ) . '</td></tr>';
+			}
+			echo '</tbody></table>';
+			return;
+		}
+
+		$counts = $this->repo->choice_counts( $poll_id, $round );
+		$choices = [];
+		$index = 0;
+		foreach ( $this->repo->round_choices( $poll_id, $round ) as $choice ) {
+			$index++;
+			$label = (string) $choice['label'];
+			if ( '' === $label ) {
+				$label = sprintf(
+					/* translators: %d is the picture number on the ballot. */
+					__( 'Picture %d', 'poller' ),
+					$index
+				);
+			}
+			$choices[] = [
+				'label' => $label,
+				'image_id' => (int) $choice['image_id'],
+				'votes' => (int) ( $counts[ (int) $choice['id'] ] ?? 0 ),
+			];
+		}
+		echo '<table class="widefat striped poller-admin-words"><thead><tr><th>' . esc_html__( 'Choice', 'poller' ) . '</th><th>' . esc_html__( 'Votes', 'poller' ) . '</th></tr></thead><tbody>';
+		foreach ( Tally::rank( $choices ) as $choice ) {
+			$thumb = $this->image_preview( $choice['image_id'] );
+			echo '<tr><td>';
+			if ( '' !== $thumb ) {
+				echo '<img src="' . esc_url( $thumb ) . '" alt=""> ';
+			}
+			echo esc_html( $choice['label'] ) . '</td><td>' . esc_html( (string) $choice['votes'] ) . '</td></tr>';
+		}
+		echo '</tbody></table>';
 	}
 
 	private function image_preview( int $id ): string {

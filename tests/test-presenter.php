@@ -67,6 +67,24 @@ class Test_Presenter extends WP_UnitTestCase {
 		$this->assertNull( $payload['image'] );
 	}
 
+	public function test_payload_after_a_reset_shows_the_new_round_empty() {
+		$poll = $this->poll_with_choices( [ [ 'label' => 'A', 'image_id' => 0 ], [ 'label' => 'B', 'image_id' => 0 ] ] );
+		$id = (int) $poll['id'];
+		$choices = $this->repo->get_choices( $id );
+		$hash = Voter::hash( str_repeat( 'a', 64 ) );
+		$this->repo->cast( $id, $hash, [ (int) $choices[0]['id'] => 1 ] );
+		$before = $this->presenter->payload( $this->repo->get_poll( $id ), $hash );
+
+		$this->repo->reset_poll( $id );
+		$payload = $this->presenter->payload( $this->repo->get_poll( $id ), $hash );
+
+		$this->assertGreaterThan( $before['revision'], $payload['revision'], 'open pages see a new revision' );
+		$this->assertSame( $before['code'], $payload['code'] );
+		$this->assertSame( 0, $payload['ballots'] );
+		$this->assertSame( [ 0, 0 ], array_column( $payload['choices'], 'votes' ) );
+		$this->assertSame( [], $payload['mine'], 'the voter sees an unanswered poll' );
+	}
+
 	public function test_no_voter_hash_means_no_mine() {
 		$poll = $this->poll_with_choices( [ [ 'label' => 'A', 'image_id' => 0 ], [ 'label' => 'B', 'image_id' => 0 ] ] );
 		$payload = $this->presenter->payload( $poll, null );

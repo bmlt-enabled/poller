@@ -98,3 +98,25 @@
 .poller-admin-words .poller-word-hidden td {
     color: #646970;
 }
+
+.poller-admin-round {
+    max-width: 36rem;
+    margin: 0.6rem 0;
+}
+
+.poller-admin-round summary {
+    cursor: pointer;
+    padding: 0.25rem 0;
+}
+
+.poller-admin-round table {
+    margin-top: 0.4rem;
+}
+
+.poller-admin-round img {
+    width: 2.5rem;
+    height: 2.5rem;
+    margin-right: 0.35rem;
+    object-fit: cover;
+    vertical-align: middle;
+}
